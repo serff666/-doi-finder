@@ -13,7 +13,7 @@
 - The workspace-root `.doi-index.json` is the one index: a paper already filed in another collection is copied, not downloaded again; older per-folder indexes are folded in. The lab page's direct PDFs follow the same rule (they used to make bare year folders). Old requests with only `dir` still work. ⑦ Archive keeps its own template.
 
 **Fixes**
-- Wrong publication years: a year must now stand alone, so the DOI tail in a file name (`acs.joc.4c02061` gave 2061) and the ends of a page range (`2025, 90, 2052–2061`) no longer count (`filing.find_year`, used by ⑦ Archive, PDF first-page reading and the lab-page parser). The lab parser also no longer returns `20` as a year.
+- Wrong publication years: a year must now stand alone, so the DOI tail in a file name (`acs.joc.4c02061` gave 2061) and the ends of a page range (`2025, 90, 2052–2061`) no longer count (`filing.find_year`, used by ⑦ Archive, PDF first-page reading and the lab-page parser). The lab parser also no longer returns `20` as a year. A PDF's first page is read for the year from the citation line (`J. Org. Chem. 2025, 90, …`), then a Published/Received date, then the copyright line, so older papers named in the text ("… in 2002 …") no longer win.
 - README: ChemASAP covers all of chemistry, not only organic.
 
 **Matching**
