@@ -505,9 +505,8 @@ window.addEventListener("unhandledrejection", (e) => {
   function countDois() {
     const n = parseDois($("dois").value).length;
     $("doiCount").textContent = `当前 ${n} 个 DOI`;
-    const badge = $("dlBadge");
-    badge.hidden = n === 0;
-    badge.textContent = n;
+    const badge = $("dlBadge");     // i18n may rebuild the tab button and drop the span
+    if (badge) { badge.hidden = n === 0; badge.textContent = n; }
   }
   function addDois(list) {
     const have = parseDois($("dois").value);
@@ -1894,15 +1893,33 @@ window.addEventListener("unhandledrejection", (e) => {
       showInfo(issn, st.journal);
       const from = Number(document.getElementById("jdFrom").value || 0);
       const to = Number(document.getElementById("jdTo").value || 0);
+      if (st.jdBusy) { setFb("正在下载中，请先等它结束或点停止", true); return; }
       run.disabled = true;
       setFb("抓取中…每年一次请求，全量通常要十几分钟");
       const box = document.getElementById("jdList");
       box.innerHTML = `<div class="empty"><div class="empty-symbol">…</div><strong>正在抓取书目</strong>
         <p>逐年翻页，过程中列表会一段段出现。</p></div>`;
+      const panel = document.getElementById("jdPanel");
+      panel.hidden = false; panel.classList.remove("done", "bad");
+      document.getElementById("jdRunTitle").textContent = "正在抓取书目…";
+      document.getElementById("jdProg").textContent = "";
+      document.getElementById("jdCurrent").textContent = "";
+      document.getElementById("jdBarFill").style.width = "0%";
+      ["jdPause", "jdRetry", "jdOpenDir"].forEach((id) => { document.getElementById(id).hidden = true; });
+      document.getElementById("jdStop").hidden = false; document.getElementById("jdStop").disabled = false;
+      const harvestEnd = (title, bad) => {
+        document.getElementById("jdStop").hidden = true;
+        panel.classList.toggle("bad", !!bad); panel.classList.toggle("done", !bad);
+        document.getElementById("jdRunTitle").textContent = title;
+        document.getElementById("jdBarFill").style.width = "100%";
+      };
       api("/api/journal/harvest", { issn, year_from: from, year_to: to }).then((r) => {
-        st.job = r.job_id;
+        st.job = r.job_id; st.activeJob = r.job_id;
         pollJob(r.job_id, (d) => {
           setFb(d.markdown || `已抓 ${d.done} 条`);
+          document.getElementById("jdRunTitle").textContent = `正在抓取书目… 已抓 ${d.done || 0} 条`
+            + (d.total && d.total > 1 ? `（${d.done || 0} / ${d.total}）` : "");
+          if (d.total > 1) document.getElementById("jdBarFill").style.width = Math.min(100, Math.round(100 * (d.done || 0) / d.total)) + "%";
           if (d.items && d.items.length) {
             st.rows = d.items.filter((x) => x.doi);
             selectByKind();
@@ -1910,14 +1927,20 @@ window.addEventListener("unhandledrejection", (e) => {
           }
         }, (d) => {
           run.disabled = false;
-          if (d.state === "error") { setFb("抓取失败：" + (d.error || ""), true); return; }
+          if (d.state === "error") {
+            harvestEnd("✗ 抓取失败：" + (d.error || "未知错误") + "。再点一次「抓取书目」重试", true);
+            setFb("抓取失败：" + (d.error || ""), true); return;
+          }
           st.rows = d.items || [];
           selectByKind();
           drawList();
           const errs = (d.errors || []).length;
+          harvestEnd(d.state === "stopped" || d.cancelled
+            ? `已停止，已抓到 ${st.rows.length} 篇（不完整）`
+            : `✓ 抓取完成：共 ${st.rows.length} 篇，已按类型勾选 ${st.sel.size} 篇${errs ? `，有 ${errs} 次请求失败，结果可能不全，可再抓一次` : ""}`, errs > 0);
           setFb(`共 ${st.rows.length} 篇，已按类型勾选 ${st.sel.size} 篇${errs ? `，${errs} 次请求失败` : ""}`);
         });
-      }).catch((e) => { run.disabled = false; setFb("抓取失败：" + e.message, true); });
+      }).catch((e) => { run.disabled = false; harvestEnd("✗ 抓取没有开始：" + e.message + "。再点一次「抓取书目」重试", true); setFb("抓取失败：" + e.message, true); });
     });
 
     document.getElementById("jdKind").addEventListener("change", () => { selectByKind(); drawList(); });
@@ -1931,18 +1954,78 @@ window.addEventListener("unhandledrejection", (e) => {
       st.rows = []; st.sel = new Set();
       drawList();
       document.getElementById("jdResultsWrap").hidden = true;
+      if (!st.jdBusy) { document.getElementById("jdPanel").hidden = true; st.jdRows = new Map(); st.jdPicked = []; }
       setFb("");
     });
 
-    document.getElementById("jdDownload").addEventListener("click", async () => {
-      const picked = [...st.sel].map((i) => st.rows[i]).filter((x) => x && x.doi);
-      if (!picked.length) { setFb("没有选中条目", true); return; }
-      const raw = (document.getElementById("jdIssn").value || "").trim();
+    // ---- download: progress panel stays next to the button, with pause / stop / retry
+    const G = (id) => document.getElementById(id);
+    const OKS = ["downloaded", "exists"];
+    const NOOA = ["no_oa", "blocked"];
+    const RETRY = ["failed", "invalid", "error", "stopped", "pending"];
+    st.jdRows = new Map();
+    st.jdBusy = false;
+
+    function jdRender(total, d, extra) {
+      const rows = [...st.jdRows.values()];
+      const c = (list) => rows.filter((r) => list.includes(r.status)).length;
+      const ok = c(OKS), no = c(NOOA), bad = c(["failed", "invalid", "error"]);
+      const done = ok + no + bad;
+      G("jdBarFill").style.width = (total ? Math.round(100 * done / total) : 0) + "%";
+      G("jdProg").textContent = `已处理 ${done} / ${total} · ✓ 成功 ${ok}`
+        + ` · 无开放获取/需订阅 ${no} · ✗ 失败 ${bad}`;
+      G("jdCurrent").textContent = d && d.state === "running" && d.current ? "当前：" + d.current : "";
+      if (rows.length) {
+        G("jdResultsWrap").hidden = false;
+        G("jdResults").innerHTML = `<div class="results-scroll"><table class="results-table">
+          <thead><tr><th>DOI</th><th>状态</th><th>文件 / 说明</th></tr></thead>
+          <tbody>${rows.map((x) => `<tr>
+            <td>${esc(x.doi || "")}</td>
+            <td>${esc((DL_STATUS[x.status] || [x.status])[0])}</td>
+            <td class="aux">${esc(x.file || x.note || "")}</td></tr>`).join("")}</tbody></table></div>`;
+      }
+      return { ok, no, bad, done, failed: failedJd().length };
+    }
+    function failedJd() {
+      const have = st.jdRows;
+      return (st.jdPicked || []).filter((x) => {
+        const r = have.get(String(x.doi).toLowerCase());
+        return !r || RETRY.includes(r.status);
+      });
+    }
+    function jdButtons(running) {
+      st.jdBusy = running;
+      G("jdDownload").disabled = running;
+      G("jdPause").hidden = !running; G("jdStop").hidden = !running;
+      if (running) { st.jdPaused = false; G("jdPause").textContent = "暂停"; G("jdPause").disabled = true; G("jdStop").disabled = true; }   // enabled once the job id is known
+      const n = running ? 0 : failedJd().length;
+      G("jdRetry").hidden = !n;
+      G("jdRetry").textContent = `↻ 重试 ${n} 个没完成的`;
+      G("jdOpenDir").hidden = running || !st.jdDest;
+    }
+
+    async function runJd(picked, isRetry) {
+      const raw = (G("jdIssn").value || "").trim();
       const journal = st.journal || (st.rows[0] && st.rows[0].journal) || raw;
       const dest = ($("dlDir") && $("dlDir").value.trim()) || "";
-      const btn = document.getElementById("jdDownload");
-      btn.disabled = true;
-      setFb(`开始下载 ${picked.length} 篇…`);
+      if (!isRetry) { st.jdPicked = picked.slice(); st.jdRows = new Map(); }
+      st.jdDest = dest;
+      const total = st.jdPicked.length;
+      const redo = new Set(picked.map((x) => String(x.doi).toLowerCase()));
+      redo.forEach((k) => { if (st.jdRows.has(k)) st.jdRows.delete(k); });   // being redone now
+      G("jdPanel").hidden = false;
+      G("jdPanel").classList.remove("done", "bad");
+      G("jdRunTitle").textContent = isRetry ? `正在重试 ${picked.length} 篇…` : `正在下载 ${picked.length} 篇…`;
+      jdButtons(true);
+      jdRender(total, null);
+      setFb("");
+      G("jdPanel").scrollIntoView({ block: "nearest", behavior: "smooth" });
+      const fail = (msg) => {
+        G("jdPanel").classList.add("bad");
+        G("jdRunTitle").textContent = "✗ 没有开始：" + msg + "。点右边的重试即可";
+        jdRender(total, null);
+        jdButtons(false);
+      };
       try {
         const r = await api("/api/download", {
           dois: picked.map((x) => x.doi),
@@ -1951,36 +2034,73 @@ window.addEventListener("unhandledrejection", (e) => {
           workers: Number(($("dlWorkers") && $("dlWorkers").value) || 3),
           layout: {
             journal,
-            items: picked.map((x) => ({ doi: x.doi, year: x.year,
-                                        volume: x.volume, issue: x.issue })),
+            items: picked.map((x) => ({ doi: x.doi, year: x.year, volume: x.volume, issue: x.issue })),
           },
         });
-        st.dlJob = r.job_id;
-        document.getElementById("jdResultsWrap").hidden = false;
+        st.activeJob = r.job_id;
+        G("jdPause").disabled = false; G("jdStop").disabled = false;
+        const merge = (d) => (d.results || []).forEach((x) => {
+          if (x && x.doi && redo.has(String(x.doi).toLowerCase())) st.jdRows.set(String(x.doi).toLowerCase(), x);
+        });
         pollJob(r.job_id, (d) => {
-          const prog = document.getElementById("jdProg");
-          if (prog) prog.textContent = `${d.done || 0} / ${d.total || picked.length}`;
-          const rows = d.results || [];
-          if (rows.length) {
-            document.getElementById("jdResults").innerHTML =
-              `<div class="results-scroll"><table class="results-table">
-                <thead><tr><th>DOI</th><th>状态</th><th>文件</th></tr></thead>
-                <tbody>${rows.map((x) => `<tr>
-                  <td>${esc(x.doi || "")}</td>
-                  <td>${esc(x.status || "")}</td>
-                  <td class="aux">${esc(x.file || x.note || "")}</td></tr>`).join("")}</tbody>
-              </table></div>`;
+          merge(d);
+          jdRender(total, d);
+          if (d.state === "running") {
+            G("jdRunTitle").textContent = d.paused ? "⏸ 已暂停（当前这篇结束后停住，点继续恢复）"
+              : (isRetry ? "正在重试… " : "正在下载… ") + `${d.done || 0} / ${d.total || picked.length}`;
+            st.jdPaused = !!d.paused;
+            G("jdPause").textContent = st.jdPaused ? "继续" : "暂停";
           }
         }, (d) => {
-          btn.disabled = false;
-          setFb(d.state === "error" ? ("下载失败：" + (d.error || "")) :
-                `下载完成：${(d.results || []).length} 条有结果，目录 ${dest}`, d.state === "error");
+          merge(d);
+          const t = jdRender(total, d);
+          jdButtons(false);
+          if (d.state === "error") {
+            G("jdPanel").classList.add("bad");
+            G("jdRunTitle").textContent = `✗ 下载中断：${d.error || "未知错误"}。已完成的保留，点重试继续剩下的`;
+          } else if (d.state === "stopped" || d.cancelled) {
+            G("jdRunTitle").textContent = `已停止 · 完成 ${t.done} / ${total}，剩 ${t.failed} 篇没做，点重试继续`;
+          } else {
+            G("jdPanel").classList.add(t.failed ? "bad" : "done");
+            G("jdRunTitle").textContent = t.failed
+              ? `下载结束，但还有 ${t.failed} 篇没成功（${t.bad} 篇失败）`
+              : `✓ 下载完成：共 ${total} 篇，成功 ${t.ok}，无开放获取/需订阅 ${t.no}`;
+          }
         });
-      } catch (e) {
-        btn.disabled = false;
-        setFb("下载失败：" + e.message, true);
-      }
+      } catch (e) { fail(e.message); }
+    }
+
+    G("jdDownload").addEventListener("click", () => {
+      if (st.jdBusy) return;
+      const picked = [...st.sel].map((i) => st.rows[i]).filter((x) => x && x.doi);
+      if (!picked.length) { setFb("没有选中条目", true); return; }
+      runJd(picked, false);
     });
+    G("jdRetry").addEventListener("click", () => {
+      if (st.jdBusy) return;
+      const todo = failedJd();
+      if (!todo.length) return toast("没有需要重试的");
+      runJd(todo, true);
+    });
+    G("jdPause").addEventListener("click", async () => {
+      if (!st.activeJob) return;
+      const resume = !!st.jdPaused;       // not read from the button text: the EN switch rewrites it
+      G("jdPause").disabled = true;
+      try {
+        const r = await api(`/api/${resume ? "resume" : "pause"}/${st.activeJob}`, {});
+        st.jdPaused = !!r.paused;
+        G("jdPause").textContent = st.jdPaused ? "继续" : "暂停";
+      } catch (e) { toast("操作失败：" + e.message); }
+      G("jdPause").disabled = false;
+    });
+    G("jdStop").addEventListener("click", async () => {
+      if (!st.activeJob) return;
+      G("jdStop").disabled = true;
+      G("jdRunTitle").textContent = "正在停止…（当前这篇查完就停）";
+      try { await api(`/api/stop/${st.activeJob}`, {}); } catch (e) { toast("停止失败：" + e.message); G("jdStop").disabled = false; }
+    });
+    G("jdOpenDir").addEventListener("click", () =>
+      api("/api/open-folder", { path: st.jdDest || $("dlDir").value.trim() }).catch((e) => toast(e.message)));
   })();
 
   $("labDownload").addEventListener("click", async () => {

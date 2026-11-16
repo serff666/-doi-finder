@@ -320,3 +320,15 @@ tr.editing > td { background: #eef3ff; }
 /* numbered explanation lists inside side panels */
 .rule .steps { margin: 6px 0 0 18px; padding: 0; line-height: 1.65; }
 .rule .steps li { margin-bottom: 4px; }
+
+/* 期刊文库：下载进度面板，固定在长列表上方，滚动时也看得到 */
+.run-panel { position: sticky; top: 8px; z-index: 5; margin: 14px 0; padding: 12px 15px; border: 1px solid #cbdafc;
+  border-radius: 12px; background: #f3f6ff; box-shadow: 0 4px 14px rgba(40, 60, 120, .08); }
+.run-panel.done { border-color: #b7e0c8; background: #f1faf5; }
+.run-panel.bad { border-color: #f1c9c9; background: #fdf4f4; }
+.run-panel[hidden] { display: none; }
+.run-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.run-head strong { font-size: 14px; }
+.run-btns { display: inline-flex; gap: 8px; flex-wrap: wrap; }
+.run-panel .progress { height: 8px; border-radius: 4px; margin-bottom: 6px; }
+.run-panel .aux { margin-top: 2px; }
