@@ -1,167 +1,294 @@
 # DOI Finder
 
-**From "I need these papers" to a tidy local library of PDFs.**
-A literature search, tracking and bulk-download tool that runs on your own computer. Have titles or references? It resolves them to DOIs and fetches the full texts. No list yet? Search by topic, author, ORCID, journal or a lab's publications page. Then it picks the right route per publisher, downloads the PDFs and files them into your workspace by one consistent rule.
+A literature search, DOI-resolution and bulk PDF download tool that runs on your own computer. The interface is a local web page in your browser; there are no accounts.
 
-The UI runs in your browser at `http://127.0.0.1:8765/`. No account, no registration; your data and keys stay on your machine.
-Windows desktop app that also runs from source on Linux (see [README.linux.md](README.linux.md)).
+It does three things, and for every result it states the evidence or the reason for failure:
 
-> 中文说明见 [README.md](README.md)。
+1. **Find papers**: build a list from titles, references, a topic, an author, an ORCID, a journal or a lab's publications page;
+2. **Resolve DOIs**: match titles or whole references to DOIs and say how trustworthy each match is;
+3. **Download and file**: fetch PDFs by a route chosen from the publisher and the publication year, and file them into your workspace by one rule.
+
+> 中文说明：[README.md](README.md)　·　Linux: [README.linux.md](README.linux.md)　·　Changelog: [CHANGES.md](CHANGES.md)
 
 > **Disclaimer**
-> This project is for **academic research and learning only** and is **not used for commercial profit**. The author provides and sells no publications.
-> The app can connect to third-party sources, including Sci-Hub mirrors. Whether that is lawful depends on your country and institution;
-> **whether and how to use it is your own decision and responsibility** (the Sci-Hub fallback can be turned off in Settings).
+> This project is for academic research and learning only and is not used for commercial profit. The author provides and sells no publications.
+> The app can connect to third-party sources, including Sci-Hub mirrors. Whether that is lawful depends on your country and institution; **whether and how to use it is your own decision and responsibility**. The Sci-Hub fallback is on by default and can be turned off in Settings.
 > Respect publishers' terms of service and copyright law; use downloaded papers for personal research only and do not redistribute them.
-> 本项目仅用于学术研究与学习，不用于商业盈利；使用第三方来源的风险与责任由使用者自行承担。
 
-## The problem
+---
 
-Papers usually start from one of two places:
+## 1. What it does and does not do
 
-- **You already have a list**: dozens or hundreds of titles, or a reference list, and you want the full texts.
-- **You do not have a list yet**: you want everything a topic, an author, a journal or a lab has published.
+**It can**
 
-Either way you hit the same problems. Searching each DOI by hand is error-prone; each publisher page is different (open access, subscription, captcha); and afterwards file names are a mess, you lose track of what you already have, and the same paper ends up in several folders.
+- turn titles / references / BibTeX / RIS into DOIs in bulk, with the evidence for each match;
+- download PDFs by DOI in bulk, recording the channel each file really came from and the reason for each failure;
+- get a paper list from a topic, an author, a journal, a lab page, a ResearchGate profile or ChemASAP, and download from the same page;
+- avoid repeating work: downloaded papers are recorded in `.doi-index.json` in the workspace.
 
-DOI Finder chains finding, downloading and filing into one pipeline and **tells you, at every step, how trustworthy the result is and why something failed.**
+**It does not promise**
 
-## Highlights
+- **That every paper can be fetched.** It depends on whether the paper is open access, whether your institution subscribes, whether the publisher blocks automated access, and whether a third-party source is up. What fails is reported with a reason.
+- **That every DOI match is right.** Matches are graded by several pieces of evidence; low grades need your review.
+- **To get around paywalls.** Subscription papers can only come from your own institutional session (§6.4) or from third-party sources you choose to enable.
 
-**Title → DOI: accurate, and it shows its evidence**
-- Not "take the first search hit": title similarity, first author, year, journal and volume/pages corroborate each other, giving four levels (high confidence / likely / needs a look / not found) with the reason for each.
-- Paste one title per line, whole references, numbered lists, BibTeX or RIS; a trailing `doi:` is used directly.
-- Crossref first, OpenAlex as fallback; a preprint and its journal version are told apart by year; Chinese papers can be completed from a Baidu Scholar link.
-- Export Excel / Markdown / HTML / CSV / DOI list, and **GB/T 7714, ACS, APA** references.
+## 2. Install and run
 
-**DOI → PDF: many routes, chosen per publisher**
-- Order depends on DOI prefix and year: Elsevier / Wiley via their official APIs, subscription journals (ACS, RSC…) via your institutional browser, open publishers directly, preprints their own way.
-- The open-access step queries OpenAlex, Unpaywall, Europe PMC, Semantic Scholar, PMC, OSTI, Zenodo, HAL, Crossref, DOAJ, CORE and Internet Archive Scholar in parallel and takes the first valid PDF.
-- Sci-Hub / Sci-Net fallback (can be turned off): mirrors are ordered by success rate, ALTCHA challenges are solved automatically.
-- **The institutional browser is always tried**: it reuses your own Chrome/Edge session (campus network or CARSI); the app never sees your password, and never skips it on a guess that you do not subscribe (the paper may be open access).
-- **Preprint fallback**: when the journal version cannot be had, ChemRxiv is searched for the same paper. Title and DOI often differ, so the match uses the journal record's own link, title, first author and year, and every match says how it was made. For papers from 2025 on (often not in open-access indexes yet), a preprint the journal record itself names is tried right before the institutional browser.
-- SSRN / Research Square preprint DOIs are traded for the published version when Crossref knows it.
+**Windows installer** (`DOI-Finder-Setup-<version>.exe` on the release page): a single-file installer, installs to `%LOCALAPPDATA%\Programs\DOI Finder` by default, needs no administrator rights, uninstalls from the Control Panel. It is not code-signed, so SmartScreen may warn: choose "More info → Run anyway". On start it opens its own app window with the local Chrome or Edge; if neither is installed it uses the default browser.
 
-**Robust batches**
-- Resumable and de-duplicated (`.doi-index.json` in the folder); files are checked for a complete PDF and re-fetched if truncated.
-- Pause / resume / stop; retry only what did not finish; show only the unfetched; export the unfetched list (CSV).
-- Every row states the **channel it actually came from** and, if it failed, the reason (no open access / subscription / captcha / timeout).
-- Filename template `{first_author}_{year}_{title}` (plus `{journal}`, `{doi}`); long titles, Chinese and Windows reserved names are handled.
+**From source** (Python 3.11 or newer):
 
-**Several ways in, all able to download**
-- **Topic search** (keywords / author / ORCID / years, optional open-access only), **ChemASAP**, **Journal feed** (what is new since you last looked), **Journal library** (a whole journal from its first issue, filed as `Journal/Year/Volume V, Issue I/`), **Lab pages** (any publications page, scraped in a real browser), **ResearchGate**, a dedicated **Preprints** page, and **Archive** for PDFs you got elsewhere.
+```bat
+:: Windows
+python server.py --open            :: --open opens the UI after start; run_server.cmd does the same
+```
 
-**Every page on its own**
-Each page downloads in place with its own progress panel (bar, pause, stop, retry, open folder) and its own **workspace, collection folder, structure, Sci-Hub switch, institutional-browser switch and worker count**. Download a journal on one page and a group's papers on another at the same time.
+```bash
+# Linux / macOS
+./run.sh                           # the first run creates .venv in the project and installs dependencies
+```
 
-**Local and transparent**
-No account; keys (Elsevier, Wiley, CORE, OpenAlex) are stored only in `settings.json` on your machine; English / Chinese UI; each channel can be switched off; certificate verification is on by default.
+- The server listens on `127.0.0.1` only, default port 8765; if it is taken the next ports are tried (up to 40). Set the environment variable `DOIFINDER_PORT` to choose a port and `DOIFINDER_NO_BROWSER=1` to stop the UI opening. There is no `--port` option.
+- The "Quit" button at the top right stops the server.
+- Optional packages (`requirements.txt`): `openpyxl` (Excel export) and `pypdf` (guessing title and year from a PDF's first page when archiving). Without them those features are unavailable; the rest is unaffected.
+- The file / folder pickers use Python's built-in tkinter, with no fallback. If tkinter is unavailable the "Choose…" button reports an error; type the path into the field instead.
+- The institutional channel and some download steps need Chrome or Edge installed.
 
-## Where files go: the workspace rule
+**What has been verified**: automated tests (unit tests, an end-to-end journal flow, browser-side UI checks) run on GitHub Actions on Windows and Ubuntu, Python 3.11 and 3.13. Real publisher traffic, institutional login and the availability of third-party sources are not covered by automation and can only be verified by use. Linux has been tested at the source level only; macOS has not been tested.
 
-Every page files the same way: `workspace / collection / sub / file.pdf`, e.g. `D:\Literature\Zhang Xinglong\2025\Zhang_2025_Title.pdf`.
+## 3. First use
 
-- **Workspace**: one root folder you pick once (top bar).
-- **Collection**: the first level, named after what is being collected and suggested automatically (editable on each page): topic search by author → the author's name (by year); by keywords → the keywords; ResearchGate → the author; journal feed → the journal (by year); journal library → the journal (`Year / Volume V, Issue I`); lab pages → the site's host (by year); ChemASAP → `ChemASAP` (by journal); preprints → `预印本`; ① and ② → `未分类` (inbox).
-- **Sub**: flat / by year / by journal / journal → year / year → volume-issue, from the paper's metadata (missing values go to "年份未知" / "期刊未知", nothing is lost).
-- Each page shows the full "will be saved to" path before you download.
-- **No duplicates**: `.doi-index.json` at the workspace root remembers every file; a paper already filed under another collection is copied, not downloaded again; the per-folder indexes of older versions are recognised.
+Set two things first; the rest can wait:
 
-## Quick start
+| Where | What | Notes |
+|---|---|---|
+| "Workspace" at the top | one root folder, e.g. `D:\Literature` | every page files under it. Default: `~/Downloads/DOI Finder` (on Windows `C:\Users\<you>\Downloads\DOI Finder`) |
+| "Contact email" in Settings | your own address | sent with requests to Crossref, OpenAlex, Unpaywall and similar services, which rate-limit such requests less. Optional, but HTTP 429 becomes more likely without it |
 
-1. Start the app and open `http://127.0.0.1:8765/`; choose the workspace at the top and (optionally) put a contact email in Settings to be rate-limited less.
-2. On **① Title → DOI** paste titles, click start, and look at the levels.
-3. Click "→ download these PDFs" and watch the panel on the same page; for papers that failed use "find preprint version" or "retry".
-4. Export the unfetched list, or open the download folder.
+A typical flow: paste titles on **① Title → DOI**, click start, check the grades; click "→ download these PDFs" and follow the panel on the same page; open the download folder when done.
 
-## Tabs
+## 4. The tabs
 
 | Tab | Input | Output |
 |---|---|---|
-| ① Title → DOI | a list of titles or full citations | one DOI per line with confidence and evidence; exportable |
-| ② DOI → PDF | a list of DOIs | local PDFs, normalised filenames, resumable |
-| ③ Topic search | keywords, author, ORCID, years | matching papers; download on the same page |
-| ④ ChemASAP | none | latest ASAP articles across chemistry (not only organic; ChemRxiv preprints included) |
-| ⑤ Journal feed | journal name or ISSN | recent articles, unread marked |
-| ⑥ ResearchGate | an author profile URL | that author's publication list |
-| ⑦ Archive | a local PDF | renamed and filed into your library |
-| ⑧ Lab pages | a group's publications page | titles, DOIs and PDF links from that page |
-| ⑨ Journal library | a journal name or ISSN (optional year range) | the whole journal's article list, downloaded into `Journal/Year/Volume V, Issue I/` folders |
-| ⑩ Preprints | a title or the journal DOI | the matching ChemRxiv preprint (title and DOI may differ from the published paper); tick and download on the same page |
+| ① Title → DOI | titles, whole references, BibTeX, RIS | a DOI per entry with grade and evidence; exportable |
+| ② DOI → PDF | a list of DOIs | local PDFs with each entry's source or failure reason |
+| ③ Topic search | keywords; optionally author, ORCID, years, "open access only" | a paper list; tick and download on the page |
+| ④ ChemASAP | none | the latest "ahead of print" articles from the third-party ChemASAP service |
+| ⑤ Journal feed | journal name or ISSN | recent articles, marking what is new since your last refresh |
+| ⑥ ResearchGate | an author profile URL | the publication list on that page (log in and pass the human check in the window first) |
+| ⑦ Archive | PDFs you already have | renamed by the template and filed into the workspace |
+| ⑧ Lab pages | a group's publications page URL | titles, DOIs and PDF links found on the page |
+| ⑨ Journal library | journal name or ISSN, optional years | the journal's article list (Crossref), downloaded into `Journal/Year/Volume V, Issue I/` |
+| ⑩ Preprints | a title or the journal DOI | candidate ChemRxiv preprints; check, then download |
 
-Pasted BibTeX / RIS is matched on more than the title: year, first author and journal are compared with each candidate. A year two or more apart, or a first author who is none of the listed authors, lowers the status by one level and says so in the note; a missing field never counts against a match. When year and first author both agree and the title similarity is at least 0.70, an "uncertain" match is raised to "likely".
+Each tab downloads in place with its own progress panel (progress, pause, stop, retry the unfinished, open folder) and its own workspace, collection folder, structure, Sci-Hub switch, institutional-browser switch and worker count; they do not interfere.
 
-**Preprints.** ⑩ finds ChemRxiv preprints through the journal record's own link (Crossref `has-preprint`), ChemRxiv search and Crossref, and grades each candidate exact / likely / possible with the reason; only the first two are used automatically. A failed query is reported as an error, never as "none". It is also the last automatic step when every other route failed. A preprint may differ from the published version; downloads are labelled as preprints. The institutional browser is always tried when the route calls for it.
+## 5. Title → DOI: how "right" is judged
 
-## Install and run
+**Input**: one title per line; whole references; numbered lists (`1.`, `2)`, `(3)`, `[4]`, `#5` are stripped); BibTeX; RIS. A trailing `doi: 10.xxxx/…` is used directly with no query.
 
-Installed build: the `DOI Finder` shortcut, or `%LOCALAPPDATA%\Programs\DOI Finder\DOI Finder.exe`.
-The app is unsigned, so Windows may show a SmartScreen warning.
+**Sources**: Crossref first; when Crossref has no usable result, OpenAlex can be asked (the switch "Use OpenAlex when Crossref falls short", on by default). "Look up identical titles once" merges duplicates.
 
-From source:
+**Scoring**: title similarity is the base. If the input has a year, first author, journal or volume/pages, they are compared with each candidate:
 
-```bat
-cd doi-finder
-python server.py            :: starts the server and opens the browser
+- only a clear contradiction counts against a candidate: a year two or more apart, or a first author who is none of the candidate's authors, lowers the grade by one level and says so in the note; fields missing from the input never count against it;
+- an "uncertain" match whose year and first author both agree and whose title similarity is at least 0.70 is raised to "likely";
+- when a preprint and its journal version share a title, the one whose year fits is chosen and the other stays as an alternative.
+
+**Grades**
+
+| Grade | Meaning | What to do |
+|---|---|---|
+| High confidence | titles agree closely and no other evidence contradicts | use directly |
+| Likely | similar title but not enough evidence | glance at the DOI link |
+| Needs a look | a candidate was found but fields disagree | click "Edit" to confirm or type the DOI |
+| Not found | no usable candidate | enter by hand, or use ③ Topic search |
+| Lookup failed | the query itself did not succeed (network, rate limit…) | retry; this is not the same as "not found" |
+| Provided / Confirmed | the input carried a DOI / you confirmed it | — |
+
+**Export**: Excel, Markdown, HTML, CSV, a plain DOI list; reference formats GB/T 7714, ACS and APA, generated from Crossref metadata, with missing fields left blank, never guessed.
+
+**Chinese papers**: CNKI and Wanfang papers often have no DOI in Crossref. Paste a Baidu Scholar paper link into "Baidu Scholar link → DOI" and the app fetches title, DOI, journal, volume and pages.
+
+## 6. DOI → PDF: how the route is chosen
+
+### 6.1 What decides the route
+
+The app first classifies the DOI prefix by publisher, then combines that with the **publication year** (after 2021, or unknown, counts as recent) and your settings to build an ordered list of steps. They are tried in order; the first step that returns a valid file ends that paper. The steps:
+
+| Step | What it does |
+|---|---|
+| `Sci-Hub` | tries Sci-Hub mirrors (ordered by past success rate) and Sci-Net; ALTCHA challenges are solved automatically |
+| `API` | the Elsevier / Wiley official interface; needs your own key / token (§8) |
+| `Open access` | see §6.3 |
+| `PMC` | PubMed Central full text |
+| `Institutional browser` | fetches the PDF with a session you logged into in your local Chrome/Edge (§6.4) |
+
+**When Sci-Hub is enabled it comes first for every DOI**; the table below applies after it. When it is off, start from the table.
+
+| DOI class | Order (steps not listed do not run) |
+|---|---|
+| Preprints (arXiv, ChemRxiv, bioRxiv/medRxiv, Research Square, SSRN, Preprints.org) | open access → (if the institutional channel is on) institutional browser |
+| Fully open publishers (PLOS, Frontiers, MDPI, eLife, Copernicus, BMC, Scientific Reports) | open access → PMC |
+| Elsevier (10.1016), Wiley (10.1002) | API (if you have a key) → open access → (recent, institutional channel on) institutional browser → PMC → (institutional channel on) institutional browser |
+| Subscription titles: ACS, RSC, AIP, Science, Springer / Springer Nature, Taylor & Francis, SAGE, IOP, Oxford, ECS, Liebert | institutional browser → open access → PMC (the year does not change the order for this class) |
+| Everything else | open access → PMC → (if the institutional channel is on) institutional browser |
+
+Two more rules:
+
+- **Preprint first for new papers**: for papers published in 2025 or later, a preprint is tried before the institutional browser, but only the one the journal record explicitly names; the setting and the per-page switch "New papers: preprint first" turn this off.
+- **Preprint last resort**: when every route has failed, a preprint is tried once more (§6.5).
+
+Each paper has a total time budget of 240 seconds, after which no new source is started; the final preprint fallback is not subject to it and only the Stop button ends it.
+
+### 6.2 Naming and duplicates
+
+- The filename template defaults to `{first_author}_{year}_{title}`; placeholders: `{first_author}` `{year}` `{title}` `{journal}` `{doi}`. Titles and authors are truncated, illegal characters replaced, and a duplicate name gets a number (only "Re-download" overwrites).
+- `.doi-index.json` at the workspace root records downloaded DOIs. A DOI seen again is skipped if already downloaded; if it sits in another folder it is copied there with no network traffic. The per-folder indexes of older versions are recognised.
+- When what comes back is structured full text (XML/HTML) rather than a PDF, the extension is honestly `.xml` / `.txt`, never disguised as a PDF.
+
+### 6.3 The open-access step
+
+1. For sources whose links can be built directly (arXiv, bioRxiv, eLife) candidate links are known without a request;
+2. OpenAlex, Unpaywall, Europe PMC, Semantic Scholar, PubMed Central, OSTI, Zenodo, HAL, Crossref, DOAJ, CORE (free key, optional), Internet Archive Scholar, the Elsevier open-access endpoint and IEEE are queried in parallel for candidate links under one shared 25-second deadline; sources that time out are dropped;
+3. candidates are de-duplicated and ranked (known mirror hosts and direct links first), then the first 8 are tried **one by one**, taking the first that yields a valid PDF;
+4. if plain HTTP fails and Chrome/Edge is installed, the paper's DOI page is opened in a real browser and tried once more (many open-access landing pages sit behind a script challenge).
+
+Results are cached: 24 hours when there are candidates, 6 hours when there are none.
+
+"A valid PDF" means the file begins with `%PDF`. **Exception**: PDF links downloaded from lab pages (⑧) are also checked for the end-of-file marker and truncated files are re-fetched; other channels only check the header, not completeness.
+
+### 6.4 The institutional channel (optional)
+
+- How it works: the app opens the publisher page in your local Chrome/Edge and reuses the session you logged into there (campus network, CARSI…). It does not read or store your password; the login state lives in `%LOCALAPPDATA%\DOIFinder\browser-profile*`.
+- First time: click "Institutional login" on a row in the download tab and log in once in the window that opens; log in again when the session expires.
+- The setting `inst_enable` is on by default, provided Chrome or Edge can be found. When off, no "institutional browser" step in the table runs.
+- The app does not skip this step on a guess that you have no subscription: the journal may be open access. But for classes where the table lists no institutional browser (fully open publishers) it is not used.
+- The channel is **serial**, with at least 3 seconds between papers. A lot of downloading in a short time can be treated by publishers as systematic downloading and get a whole institution blocked; run batches of several hundred in smaller pieces.
+
+### 6.5 Preprints
+
+When the journal version cannot be had, the author often has the same paper on ChemRxiv, but a preprint's title and DOI frequently differ from the published ones, so they cannot be matched by DOI. The app:
+
+1. first looks at the preprint relation in the journal record (Crossref `has-preprint`);
+2. otherwise scores ChemRxiv's official search and Crossref's ChemRxiv records (DOI prefix 10.26434) by title similarity, first author and year;
+3. grades candidates exact / likely / possible with the evidence; automatic download uses only "exact" and "likely", and "possible" is left for you to tick on page ⑩;
+4. labels a downloaded preprint as such: **its content may differ from the published version**.
+
+Also: for SSRN or Research Square preprint DOIs the app looks up the published version in Crossref by title and, if found, downloads that instead.
+
+"Query failed" means the question was not answered, not that the paper has no preprint; retry.
+
+## 7. Where files go
+
+Every page files by the same rule, so the path is always:
+
+```
+workspace / collection / sub / file.pdf
+e.g. D:\Literature\Zhang Xinglong\2025\Zhang_2025_Title.pdf
 ```
 
-Requires Python 3.11+ (`pip install -r requirements.txt`). Excel export needs `openpyxl`; extracting text from PDFs needs `pypdf`.
-The browser channel needs Chrome or Edge installed.
+- **Workspace**: the root folder set at the top. A page can name a different workspace for itself.
+- **Collection**: the first level, suggested from what you are collecting and editable on the page. The suggested names follow the interface language (the Chinese names in the table below when the UI is Chinese, English ones such as `Unsorted`, `Preprints` when it is English).
+- **Sub**: flat / by year / by journal / journal → year / year → volume-issue. Year and journal come from the paper's metadata; when missing the file goes to "年份未知" / "期刊未知" (these two folder names are written by the program and do not change with the interface language), so nothing is lost.
+- Each page's download row shows "Will be saved to: …", so you can see the full path first.
 
-## First run
+| Tab | Suggested collection | Suggested sub |
+|---|---|---|
+| ③ Topic search (author filled in) | the author's name | by year |
+| ③ Topic search (keywords only) | the keywords | flat |
+| ⑥ ResearchGate | the author's name | by year |
+| ⑤ Journal feed | the journal | by year |
+| ⑨ Journal library | the journal | year → `Volume V, Issue I` |
+| ⑧ Lab pages | the site's host name | by year |
+| ④ ChemASAP | `ChemASAP` | by journal |
+| ⑩ Preprints | "Preprints" | flat |
+| ① Title → DOI, ② DOI → PDF | "Unsorted" | flat |
 
-Two fields at the top are worth filling immediately:
+## 8. Settings and keys
 
-- **Download folder** — where PDFs go.
-- **Contact email** — sent to Crossref / Unpaywall / OpenAlex as part of the request. This puts you in their polite pool, which means fewer 429s. It is not an account and nothing is mailed to you.
+Settings are stored in `%LOCALAPPDATA%\DOIFinder\settings.json` (Linux: `~/.local/share/DOIFinder`). `settings.example.json` in the repository shows the fields and contains no keys.
 
-No account or registration is required.
+| Setting | Default | Notes |
+|---|---|---|
+| Workers | 3, range 1–5 | how many papers at once; too many invites rate limiting |
+| Sci-Hub / Sci-Net fallback | on | see §6.1; can be turned off |
+| Skip Sci-Hub mirror certificate checks | off | only when a mirror's certificate has expired and it cannot be reached, and only on a trusted network |
+| Institutional channel | on (needs Chrome/Edge) | §6.4 |
+| New papers: preprint first | on | §6.1 |
+| Elsevier API key / insttoken | empty | free key at dev.elsevier.com; subscribed full text also needs an insttoken from your institution. Without a key, an Elsevier failure note tells you to enter one |
+| Wiley TDM token | empty | from the TDM page of Wiley Online Library |
+| OpenAlex key, CORE key | empty | optional, raise quotas |
+| Filename template | `{first_author}_{year}_{title}` | §6.2 |
 
-## How the download order is decided
+Elsevier keys and Wiley tokens are issued to individual accounts: **do not share them**.
 
-Sci-Hub (if enabled) is always tried first; after that the order depends on the publisher prefix:
+## 9. Notes on the other tabs
 
-| Paper type | Order |
-|---|---|
-| Any paper (Sci-Hub enabled) | **Sci-Hub first**, then the rows below |
-| ACS, RSC, Science, AIP and other subscription titles | institutional browser → direct → open access → PMC |
-| Wiley (10.1002) | Wiley API → direct → open access → PMC |
-| Elsevier (10.1016) | Elsevier API → direct → institutional browser → open access → PMC |
-| Fully open publishers (MDPI, PLOS, Frontiers) | direct → open access → PMC |
-| Preprints (arXiv, SSRN, ChemRxiv) | direct → open access → institutional browser |
+- **③ Topic search**: keyword search uses OpenAlex (up to 40 results by default); the table shows title and DOI, journal and year, authors, citations and whether it is open access. With an ORCID, the ORCID public API is used first for the works that author registered, and OpenAlex only if that returns nothing.
+- **④ ChemASAP**: data comes from the third-party ChemASAP service (`api.baranlab.org`); which journals it covers is that service's decision, not this program's, and there are no per-journal or per-field tick boxes. You can filter by title, author or journal name, or show open access only. The data is cached for 10 minutes.
+- **⑤ Journal feed**: data comes from Crossref's journal catalogue, not from publisher pages. The "new" mark means new since your last refresh; "Mark read" saves the current position.
+- **⑥ ResearchGate**: the site has a Cloudflare human check that must be passed first with "Open and log in" in the window that opens. Scraping goes page by page; a few hundred papers take a minute or two. Entries may lack a DOI, in which case they go through title resolution.
+- **⑦ Archive**: reads the PDF's first page to guess title and year (needs `pypdf`); you can also type title, authors, year, journal and DOI.
+- **⑧ Lab pages**: opens the page in a real browser and loads it in rounds (some pages must be scrolled to the end), which can take a minute or two. Links the page gives as direct PDFs are downloaded from the link; entries with only a DOI follow the routes of §6; entries with only a title need to go to ① first. An arXiv paper with no DOI gets `10.48550/arXiv.<id>` synthesised. File names carry the title and a link hash to avoid overwriting.
+- **⑨ Journal library**: the bibliography comes from Crossref; contents pages, covers, corrections and the like are filtered by the "type" option (default: exclude corrections / editorials / tables of contents). Review time and quartile can optionally be shown, see below.
 
-Sci-Hub, when enabled, is always tried first.
+### Journal facts (optional)
 
-Open-access resolution queries OpenAlex, Unpaywall, Europe PMC, Semantic Scholar, PMC, OSTI, Zenodo, HAL, Crossref, DOAJ, CORE (needs a free API key) and Internet Archive Scholar in parallel within a 15-second budget, and caches results for 24 hours.
+Tab ⑨ can show a journal's average / median review time, JCR quartile, CAS zone and impact factor. The data comes from the public [CrushSCI-Journal-Review-Time](https://github.com/wangshunqi2020-commits/CrushSCI-Journal-Review-Time) dataset (CC BY-NC 4.0: non-commercial use, attribution required). It is **not bundled**: click "Download journal data" and it is saved on your own machine. Review days are calendar days from receipt to acceptance and are observed samples in that dataset, not a guarantee.
 
-## Journal facts (optional)
+## 10. Privacy and where data goes
 
-On the whole-journal tab, a panel can show a journal's average / median review time, JCR quartile, CAS zone and impact factor. The data comes from the public [CrushSCI-Journal-Review-Time](https://github.com/wangshunqi2020-commits/CrushSCI-Journal-Review-Time) dataset (CC BY-NC 4.0: non-commercial use, attribution required). It is **not bundled**: click "Download journal data" and it is saved on your own machine. Review days are calendar days from receipt to acceptance and are observed samples, not guaranteed timelines.
+- The program and its data run on your computer; the server listens on `127.0.0.1` only and checks the Host and Origin of requests, so other websites cannot drive its API. There are no accounts and no telemetry.
+- Keys are written only to `settings.json` on your machine; they are not uploaded and not packed into the installer.
+- **But searching and downloading need the network**: the titles, DOIs, keywords and author names you enter, and the contact email you give, are sent to the third-party services used (Crossref, OpenAlex, Unpaywall, Europe PMC and others; when enabled also Sci-Hub mirrors, publisher sites, ChemRxiv, ChemASAP, Baidu Scholar, ResearchGate). Be aware of this before using it.
+- The institutional channel uses your own browser session; the program does not store passwords.
 
-## Keys and privacy
+## 11. Troubleshooting
 
-- All keys live only in `%LOCALAPPDATA%\DOIFinder\settings.json` on your machine. Nothing is uploaded and nothing is bundled into the installer.
-- This repository contains no keys; every field in `settings.example.json` is empty.
-- Elsevier API keys and Wiley TDM tokens are issued to individual accounts and must not be shared.
-- The Sci-Hub fallback is **on by default and tried first** (turn it off in the download tab). Whether using it is lawful depends on where you are; you are responsible for your own use. Mirror certificates are verified by default; a Settings checkbox can skip verification for mirrors with expired certificates, which you should only do on a trusted network.
-- The institutional channel reuses your own browser session; the app never stores your password.
+**Many "lookup failed" / DOIs not found**: usually rate limiting. Make sure the contact email is set, lower the workers, and run smaller batches (a few dozen at a time is steadier than hundreds).
 
-## Troubleshooting
+**Subscribed but not downloaded**: click "Institutional login" on that row, log in once, retry. If it still fails read that row's note: "network slow" and "no subscription" are different, and the former just needs a retry.
 
-**Many lookups fail / DOIs not found** — usually rate limiting. Fill in the contact email, lower the worker count, and run in smaller batches.
+**Blank PDF pages**: apart from direct links on ⑧, channels check only the file header, so a truncated file can slip through. Delete the file and retry with "Re-download".
 
-**Paper not downloaded although your institution subscribes** — click "institutional login" on that row, sign in once in the window that opens, then retry.
+**Stuck on one paper**: a paper has a 240-second budget, and a single institutional-browser wait defaults to 75 seconds (`inst_timeout`, 5–300). Pause, deal with the others, then resume.
 
-**Blank PDF pages** — older builds saved truncated files. Downloads are now validated by checking the PDF end marker; incomplete files are re-fetched.
+**The dialog does not appear or is not in front**: see §2; the pickers use tkinter only. If it reports an error, type the path.
 
-**Where are the logs** — `%LOCALAPPDATA%\DOIFinder\doifinder.log`. Each download run logs every paper it failed to fetch, prefixed with `miss`.
+**Logs**: `%LOCALAPPDATA%\DOIFinder\doifinder.log` (rotated beyond 1 MB). Each finished batch logs every paper that was not fetched, with the reason, on lines starting with `miss`.
 
-**A button does nothing** — the status bar in the top right shows the script error and line number. A hard refresh (Ctrl+F5) usually clears it.
+**A button does nothing**: the status bar at the top right shows the script error and line number; Ctrl+F5 usually fixes it.
 
-## Credits
+## 12. Layout
 
-See [NOTICE](NOTICE) for third-party projects this code was derived from or inspired by.
+```
+server.py         local HTTP server, job scheduling, settings
+doi_engine.py     title → DOI: Crossref / OpenAlex queries and scoring
+validation.py     reference field checks
+citeparse.py      reference / BibTeX / RIS parsing
+downloader.py     DOI → PDF: stepwise routes, naming, de-duplication
+routing.py        download steps from publisher class and year
+sources.py        open-access source aggregation and cache
+scihub.py         Sci-Hub / Sci-Net mirrors and ALTCHA solving
+elsevier.py       Elsevier official API
+wiley.py          Wiley TDM API
+browser.py        browser channel (institutional session, DOI pages, ResearchGate)
+carsi.py          institutional login entry
+preprints.py      ChemRxiv preprint search and grading
+filing.py         workspace / collection / sub rules, year detection
+journals.py       journal feed
+journalinfo.py    journal facts (optional download)
+labpage.py        lab page scraping
+chem.py           ChemASAP interface
+exporters.py      table export
+classify.py, topics.py   topic classification and batch topic lookup
+netpolicy.py, platform_util.py   network and platform helpers, file pickers
+web/              the interface (plain JS, no build step; English strings in i18n.en.js)
+tests/            unit tests and browser-side checks (run in CI)
+```
 
-## License
+## 13. License
 
-MIT, see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE). Third-party sources and credits: [NOTICE](NOTICE). Third-party dependencies keep their own licenses.
