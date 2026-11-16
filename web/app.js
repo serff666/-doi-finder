@@ -1097,6 +1097,7 @@ window.addEventListener("unhandledrejection", (e) => {
       $("scihubMirrors").value = s.scihub_mirrors || "";
       $("instEnable").checked = s.inst_enable === true;
       $("instFirst").checked = s.inst_first === true;
+      $("preprintEarly").checked = s.preprint_early !== false;
       $("instLoginUrl").value = s.inst_login_url || "";
       if ($("elsevierKey")) $("elsevierKey").value = s.elsevier_key || "";
       if ($("elsevierToken")) $("elsevierToken").value = s.elsevier_token || "";
@@ -1127,6 +1128,7 @@ window.addEventListener("unhandledrejection", (e) => {
                     scihub_mirrors: $("scihubMirrors").value.trim(),
                     inst_enable: $("instEnable").checked,
                     inst_first: $("instFirst").checked,
+                    preprint_early: $("preprintEarly").checked,
                     inst_login_url: $("instLoginUrl").value.trim(),
                     elsevier_key: $("elsevierKey") ? $("elsevierKey").value.trim() : "",
                     elsevier_token: $("elsevierToken") ? $("elsevierToken").value.trim() : "",
@@ -1218,6 +1220,7 @@ window.addEventListener("unhandledrejection", (e) => {
       scihub: $("scihubEnable") ? $("scihubEnable").checked : true,
       mirrors: $("scihubMirrors") ? $("scihubMirrors").value.trim() : "",
       inst: $("instEnable") ? $("instEnable").checked : undefined,
+      preprint_early: $("preprintEarly") ? $("preprintEarly").checked : undefined,
       login_url: $("instLoginUrl") ? $("instLoginUrl").value.trim() : "",
     }, extra || {});
   }
@@ -1232,6 +1235,7 @@ window.addEventListener("unhandledrejection", (e) => {
         <button class="btn sm" id="${P("Open")}" type="button">打开</button>
         <label class="setting inline"><input id="${P("Sci")}" type="checkbox"><span>Sci-Hub</span></label>
         <label class="setting inline"><input id="${P("Inst")}" type="checkbox"><span>机构浏览器</span></label>
+        <label class="setting inline" title="2025 年及以后的文献，机构浏览器之前先用期刊记录登记的 ChemRxiv 预印本"><input id="${P("PreEarly")}" type="checkbox"><span>新文献先预印本</span></label>
         <select class="smallinput" id="${P("Workers")}" title="并发"><option value="1">并发 1</option><option value="3">并发 3</option><option value="5">并发 5</option></select>
       </div>
       <div id="${P("Panel")}" class="run-panel" hidden role="status" aria-live="polite">
@@ -1391,6 +1395,7 @@ window.addEventListener("unhandledrejection", (e) => {
       dir: () => ($("dlDir") ? $("dlDir").value.trim() : ""),
       scihub: () => ($("scihubEnable") ? $("scihubEnable").checked : true),
       inst: () => ($("instEnable") ? $("instEnable").checked : false),
+      pre: () => ($("preprintEarly") ? $("preprintEarly").checked : true),
       workers: () => String(($("dlWorkers") && $("dlWorkers").value) || 3),
     };
     function syncDefaults() {
@@ -1398,6 +1403,7 @@ window.addEventListener("unhandledrejection", (e) => {
       G("Dir").placeholder = "下载目录（留空 = 默认：" + (gv.dir() || "未设置") + "）";
       G("Sci").checked = saved.scihub !== undefined ? !!saved.scihub : gv.scihub();
       G("Inst").checked = saved.inst !== undefined ? !!saved.inst : gv.inst();
+      G("PreEarly").checked = saved.pre !== undefined ? !!saved.pre : gv.pre();
       G("Workers").value = saved.workers !== undefined ? String(saved.workers) : gv.workers();
     }
     function remember(k, v) {
@@ -1407,6 +1413,7 @@ window.addEventListener("unhandledrejection", (e) => {
     G("Dir").addEventListener("change", () => remember("dir", G("Dir").value.trim()));
     G("Sci").addEventListener("change", () => remember("scihub", G("Sci").checked));
     G("Inst").addEventListener("change", () => remember("inst", G("Inst").checked));
+    G("PreEarly").addEventListener("change", () => remember("pre", G("PreEarly").checked));
     G("Workers").addEventListener("change", () => remember("workers", Number(G("Workers").value)));
     G("Pick").addEventListener("click", async () => {
       try {
@@ -1456,6 +1463,7 @@ window.addEventListener("unhandledrejection", (e) => {
         b.dir = pageDir();
         b.scihub = G("Sci").checked;
         b.inst = G("Inst").checked;
+        b.preprint_early = G("PreEarly").checked;
         b.workers = Number(G("Workers").value) || 3;
         return b;
       },

@@ -292,6 +292,83 @@ def test_institutional_browser_is_opened_every_time_and_oa_still_tried_after_it_
         _undo(undo)
 
 
+# ------------------------------------------------------------------ 2025 on: a certain preprint before the institutional browser
+PRE = "10.26434/chemrxiv-2025-abcde"
+REL_NET = lambda: Net(works={  # noqa: E731
+    "10.1021/jacs.5c01234": {"DOI": "10.1021/jacs.5c01234", "title": [JT],
+                             "relation": {"has-preprint": [{"id-type": "doi", "id": PRE}]}},
+    PRE: cx(PRE, "Another working title", 2025, ["Bo Chen"])})
+
+
+def _early(year, net, inst_extra=None, fetch_ok=True, doi="10.1021/jacs.5c01234"):
+    import browser
+    import downloader
+    import sources
+    undo = [(browser, "find_browser", browser.find_browser), (browser, "fetch_pdf", browser.fetch_pdf),
+            (sources, "work_meta", sources.work_meta), (sources, "resolve_oa", sources.resolve_oa),
+            (sources, "published_version", sources.published_version), (downloader, "fetch_pdf", downloader.fetch_pdf),
+            (downloader, "INST_MIN_INTERVAL", downloader.INST_MIN_INTERVAL), (de, "Http", de.Http)]
+    calls, fetched = [], []
+    browser.find_browser = lambda: "chrome"
+    browser.fetch_pdf = lambda d, profile, timeout=75.0, login_url="": (calls.append(d) or (None, "没拿到", ""))
+    sources.work_meta = lambda d, email="": {"title": JT, "year": str(year), "first_author": "Ann Smith", "journal": "JACS"}
+    sources.resolve_oa = lambda d, email="", diag=None: []
+    sources.published_version = lambda d, title="", mailto="": ""
+
+    def fetch(url):
+        fetched.append(url)
+        return (b"%PDF-1.4 pre", "", url) if fetch_ok and "10.26434" in url else (None, "HTTP 403", url)
+    downloader.fetch_pdf = fetch
+    downloader.INST_MIN_INTERVAL = 0
+    de.Http = lambda *a, **k: net
+    try:
+        inst = {"enabled": True, "profile": "/p", "timeout": 1}
+        inst.update(inst_extra or {})
+        rec = downloader.download_one(doi, tempfile.mkdtemp(), "", "{title}", {}, scihub_conf={"enabled": False}, inst_conf=inst)
+    finally:
+        _undo(undo)
+    return rec, calls, fetched
+
+
+def test_recent_year_boundary():
+    import downloader
+    assert [downloader.recent_year(y) for y in (2024, "2024-12-31", 2025, "2025", 2026, "", None, "x")] == \
+        [False, False, True, True, True, False, False, False]
+
+
+def test_2025_paper_uses_the_certain_preprint_before_the_browser_and_says_so():
+    rec, calls, _ = _early(2025, REL_NET())
+    assert rec["status"] == "downloaded" and calls == [], (rec, calls)          # the browser was never opened
+    assert rec["source"].startswith("ChemRxiv 预印本") and "预印本，可能与正式版有出入" in rec["note"], rec
+
+
+def test_older_paper_still_goes_to_the_browser_first():
+    rec, calls, fetched = _early(2024, REL_NET())
+    assert calls and not any(PRE in u for u in fetched[:1]), (calls, fetched)   # browser first; preprint only as last resort
+    assert rec["status"] == "downloaded"                                         # ...which still rescues it
+
+
+def test_switch_off_keeps_the_old_order():
+    rec, calls, _ = _early(2025, REL_NET(), {"preprint_early": False})
+    assert calls, calls                                                          # browser tried before the last-resort preprint
+
+
+def test_a_guessed_preprint_is_not_used_early():
+    t2 = "Machine learned force fields for efficient generation of conformers"
+    net = Net(search=[cx("10.26434/chemrxiv-2025-x1", t2, 2025, ["Ann Smith"])])
+    rec, calls, _ = _early(2025, net)
+    assert calls, calls                                                          # only "likely": browser first
+
+
+def test_failed_early_preprint_does_not_block_the_browser_and_is_not_fetched_twice():
+    net = REL_NET()
+    rec, calls, fetched = _early(2025, net, fetch_ok=False)
+    assert sum("/works/10.1021" in u for u in net.urls) == 1, net.urls         # the finder asked once, not twice
+    assert calls, calls                                                          # browser still tried afterwards
+    assert sum(PRE in u for u in fetched) == 1, fetched                          # one failed fetch, not two
+    assert rec["status"] != "downloaded"
+
+
 # ------------------------------------------------------------------ the server job behind the page
 def _server():
     os.environ.setdefault("DOIFINDER_DATA", tempfile.mkdtemp())

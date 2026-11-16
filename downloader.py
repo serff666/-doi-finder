@@ -111,6 +111,17 @@ def build_name(meta: dict, doi: str, template: str = DEFAULT_TEMPLATE) -> str:
     return out
 
 
+EARLY_PREPRINT_FROM = 2025
+
+
+def recent_year(year) -> bool:
+    """True for papers published in EARLY_PREPRINT_FROM or later (unknown year: no)."""
+    try:
+        return int(str(year).strip()[:4]) >= EARLY_PREPRINT_FROM
+    except (TypeError, ValueError):
+        return False
+
+
 def journal_folder(journal: str, year, volume, issue) -> str:
     """Relative folder: <Journal>/<Year>/Volume <V>, Issue <I>."""
     vol, iss = str(volume or "").strip(), str(issue or "").strip()
@@ -417,7 +428,8 @@ def download_one(doi: str, dest: str, email: str, template: str,
         rec.update({"status": "downloaded", "file": name, "url": got["url"],
                     "source": got["source"],
                     "note": f"{len(got['data']) // 1024} KB · "
-                            + ("PDF" if got["data"][:4] == b"%PDF" else "全文（非 PDF）")})
+                            + ("PDF" if got["data"][:4] == b"%PDF" else "全文（非 PDF）")
+                            + (" · 预印本，可能与正式版有出入" if str(got["source"]).startswith("ChemRxiv 预印本") else "")})
         return rec
 
     # ---------------------------------------------------------------- sources
@@ -533,7 +545,15 @@ def download_one(doi: str, dest: str, email: str, template: str,
             return None
         return {"data": data, "source": "ResearchGate", "url": url}
 
-    def try_preprint() -> dict | None:
+    pre_state: dict = {}                 # the finder's answer, so the early and the last try ask only once
+
+    def try_preprint_early() -> dict | None:
+        """Very recent papers (2025 on) are often not in any open-access index yet, and the institutional
+        browser is slow and rate-sensitive.  So, just before it, use the preprint — but only when the
+        journal record itself names it (level "exact"); guessed matches wait for the last step."""
+        return try_preprint(exact_only=True)
+
+    def try_preprint(exact_only: bool = False) -> dict | None:
         """The journal version could not be had: look for the same paper on ChemRxiv.
 
         Title and DOI usually differ, so this matches on the journal record's own link to the
@@ -545,15 +565,20 @@ def download_one(doi: str, dest: str, email: str, template: str,
         if not title:
             errors.append("ChemRxiv：没有标题可查")
             return None
-        say("正式版没拿到，去 ChemRxiv 找同一篇的预印本…")
-        try:
-            import doi_engine as _de
-            found = preprints.find(title, doi=doi, first_author=meta.get("first_author") or "",
-                                   year=meta.get("year"), http=_de.Http(email))
-        except Exception as e:  # noqa: BLE001
-            errors.append(f"ChemRxiv：查询出错（{type(e).__name__}），可重试")
-            return None
+        say("去 ChemRxiv 找同一篇的预印本…" if exact_only else "正式版没拿到，去 ChemRxiv 找同一篇的预印本…")
+        if "found" not in pre_state:
+            try:
+                import doi_engine as _de
+                pre_state["found"] = preprints.find(title, doi=doi, first_author=meta.get("first_author") or "",
+                                                    year=meta.get("year"), http=_de.Http(email))
+            except Exception as e:  # noqa: BLE001
+                if not exact_only:
+                    errors.append(f"ChemRxiv：查询出错（{type(e).__name__}），可重试")
+                return None
+        found = pre_state["found"]
         pick = preprints.best_auto(found)
+        if exact_only and not (pick and pick.get("level") == "exact"):
+            return None                     # nothing certain yet; the last step may still use a likely one
         if not pick:
             if found.get("error"):
                 errors.append("ChemRxiv：没连上，可重试（" + found["error"][:80] + "）")
@@ -562,8 +587,11 @@ def download_one(doi: str, dest: str, email: str, template: str,
             else:
                 errors.append("ChemRxiv：没有找到同一篇的预印本")
             return None
+        if pick["doi"] in pre_state.setdefault("failed", set()):
+            return None                     # the early try already failed to get this very PDF
         data, purl, perr = fetch_preprint(pick, inst.get("profile") or "", float(inst.get("timeout") or 75))
         if not data:
+            pre_state["failed"].add(pick["doi"])
             errors.append(f"ChemRxiv 预印本 {pick['doi']}：{perr or '没拿到 PDF'}")
             return None
         return {"data": data, "source": f"ChemRxiv 预印本 {pick['doi']}（{pick['why']}）", "url": purl}
@@ -640,6 +668,11 @@ def download_one(doi: str, dest: str, email: str, template: str,
         if fn is not None and fn not in _seen:  # "direct" and "oa" share try_oa
             _seen.add(fn)
             order.append((s_, fn))
+    if inst.get("preprint_early", True) and recent_year(meta.get("year")):
+        # 2025 on: a certain preprint goes in front of the (slow, rate-limited) institutional browser
+        at = next((i for i, (n, _f) in enumerate(order) if n == "browser"), None)
+        if at is not None:
+            order.insert(at, ("preprint", try_preprint_early))
 
     for name, attempt in order:
         if active_seconds() > DEADLINE_PER_DOI:
