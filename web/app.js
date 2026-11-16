@@ -1241,7 +1241,7 @@ window.addEventListener("unhandledrejection", (e) => {
             <button class="btn" id="${P("Pause")}" type="button" hidden>暂停</button>
             <button class="btn danger" id="${P("Stop")}" type="button" hidden>停止</button>
             <button class="btn primary" id="${P("Retry")}" type="button" hidden></button>
-            <button class="btn" id="${P("OpenDir")}" type="button" hidden>打开下载目录</button>
+            <button class="btn" id="${P("OpenDir")}" type="button">打开下载目录</button>
           </span>
         </div>
         <div class="progress"><div class="bar" id="${P("BarFill")}"></div></div>
@@ -1314,7 +1314,7 @@ window.addEventListener("unhandledrejection", (e) => {
       const n = running ? 0 : failedList().length;
       G("Retry").hidden = !n;
       G("Retry").textContent = `↻ 重试 ${n} 个没完成的`;
-      G("OpenDir").hidden = running || !S.dest;
+      G("OpenDir").hidden = false;                  // the files are already there while it runs too
     }
 
     async function run(picked, isRetry) {
@@ -1444,7 +1444,7 @@ window.addEventListener("unhandledrejection", (e) => {
       try { await api(`/api/stop/${S.job}`, {}); } catch (e) { toast("停止失败：" + e.message); G("Stop").disabled = false; }
     });
     G("OpenDir").addEventListener("click", () =>
-      api("/api/open-folder", { path: S.dest || $("dlDir").value.trim() }).catch((e) => toast(e.message)));
+      api("/api/open-folder", { path: S.dest || pageDir() }).catch((e) => toast(e.message)));
 
     return {
       get busy() { return S.busy; },
