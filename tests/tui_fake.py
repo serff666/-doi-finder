@@ -1,11 +1,21 @@
 """Fake local engine for the terminal-client tests."""
 import time
 class FakeApi:
-    def __init__(self): self.jobs = {}; self.n = 0; self.saved = {}; self.calls = []
+    def __init__(self):
+        self.jobs = {}; self.n = 0; self.saved = {}; self.calls = []
+        self.fail_next = {}      # path -> how many upcoming calls raise (a dropped connection)
+        self.job_error = {}      # path -> message: the job itself ends in state "error"
+        self.lookup_fn = None    # text -> final job dict, to script lookup results
+        self.get_hook = None     # path -> anything, to break the poll loop
     def get(self, path, timeout=30):
+        if self.get_hook: return self.get_hook(path)
         j = self.jobs[path.rsplit("/", 1)[-1]]
         el = time.time() - j["t0"]
-        if j["stop"]: return dict(j["final"], state="stopped")
+        if j["stop"]:
+            fin = dict(j["final"], state="stopped")
+            if fin.get("results"):       # what was not finished when the job was stopped
+                fin["results"] = [dict(r, status="stopped") if r.get("status") == "failed" else r for r in fin["results"]]
+            return fin
         if el > j["dur"]: return j["final"]
         return {"state": "running", "done": int(el / j["dur"] * j["total"]), "total": j["total"], "current": j.get("cur", "")}
     def _job(self, final, total, dur=0.4, cur=""):
@@ -14,9 +24,17 @@ class FakeApi:
         return {"job_id": jid, "total": total}
     def post(self, path, body=None, timeout=120):
         body = body or {}; self.calls.append((path, body))
+        if self.fail_next.get(path, 0) > 0:
+            self.fail_next[path] -= 1
+            raise RuntimeError("[Errno 101] Network is unreachable")
+        if path in self.job_error:
+            return self._job({"state": "error", "error": self.job_error[path], "done": 0, "total": 1}, 1, dur=0.2)
         if path == "/api/settings":
             if body.get("save"): self.saved.update(body["settings"])
             return {"settings": dict({"download_dir": "/home/u/Downloads/DOI Finder", "email": "", "template": "{first_author}_{year}_{title}", "download_workers": 3, "scihub_enable": True, "core_key": "k"}, **self.saved)}
+        if path == "/api/lookup" and self.lookup_fn:
+            final = self.lookup_fn(body["text"])
+            return self._job(final, len(final.get("results") or []), dur=0.2)
         if path == "/api/lookup":
             res = [
               {"input": "Attention is all you need", "status": "matched", "doi": "10.48550/arxiv.1706.03762", "score": .99, "year": 2017},

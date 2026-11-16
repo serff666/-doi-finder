@@ -78,9 +78,11 @@ python tui.py        # Linux/macOS 也可以 ./run.sh tui；Windows 双击 run_t
 
 - 粘贴多行标题，回车 → 查 DOI；粘贴 DOI，回车 → 下载 PDF
 - `/search 关键词 --oa --year 2020-2024`、`/journal 期刊名或ISSN 2011-2024`
-- 列表带序号：`/download 1 3 5-8`，`/retry` 重试没下到的
+- 列表带序号：`/download 1 3 5-8`
+- **出错了可以重试**：断网、接口出错、下载没成功、查找没找到、中途按了 Esc，界面都会说明原因并在底部提示，按 `Ctrl+R`（或输入 `/retry`）重做。查找只重跑 ✗ 的那几行，已经找到的和序号都不变；`/retry list` 看有哪些可重试，`/retry download` 指定其一
+- **改某一行的 DOI**：`/fix 3` 看第 3 行的备选，`/fix 3 2` 选第 2 个，`/fix 3 10.1021/xxxx`（或粘贴 doi.org 链接）手动指定，`/fix 3 -` 清除
 - `/settings`、`/set workers 5`、`/set scihub off`、`/dir ~/Papers`
-- `Esc` 停止当前任务，`Ctrl+C` 清空输入（连按两次退出）
+- `Esc` 停止当前任务，`Ctrl+C` 清空输入（连按两次退出），`↑↓` 翻历史，`Tab` 补全命令，`Ctrl+L` 清屏
 
 ## 第一次启动要填什么
 
