@@ -25,6 +25,17 @@ Also: journal feed, lab-page scraping, and reference export. Windows desktop app
 | ⑦ Archive | a local PDF | renamed and filed into your library |
 | ⑧ Lab pages | a group's publications page | titles, DOIs and PDF links from that page |
 
+## Terminal client
+
+A Claude-Code-style prompt that shares the engine and settings of the web UI (standard library only):
+
+```bash
+python tui.py        # or ./run.sh tui on Linux/macOS, run_tui.cmd on Windows
+```
+
+Paste titles → find DOIs; paste DOIs → download. `/search WORDS --oa --year 2020-2024`, `/journal NAME-or-ISSN 2011-2024`,
+`/download 1 3 5-8`, `/retry`, `/settings`, `/set workers 5`, `/dir ~/Papers`. `Esc` stops a job; `Ctrl+C` twice quits.
+
 ## Install and run
 
 Installed build: the `DOI Finder` shortcut, or `%LOCALAPPDATA%\Programs\DOI Finder\DOI Finder.exe`.

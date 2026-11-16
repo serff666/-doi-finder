@@ -66,6 +66,22 @@ python server.py --port 9000
 
 ---
 
+## 终端版
+
+不想开浏览器页面时，可以直接在终端里用（只依赖 Python 标准库，和网页版共用同一个引擎与设置）：
+
+```bash
+python tui.py        # Linux/macOS 也可以 ./run.sh tui；Windows 双击 run_tui.cmd
+```
+
+界面仿照 Claude Code：上面是滚动的记录（`⏺` 动作、`⎿` 结果），底部是输入框和一行提示。
+
+- 粘贴多行标题，回车 → 查 DOI；粘贴 DOI，回车 → 下载 PDF
+- `/search 关键词 --oa --year 2020-2024`、`/journal 期刊名或ISSN 2011-2024`
+- 列表带序号：`/download 1 3 5-8`，`/retry` 重试没下到的
+- `/settings`、`/set workers 5`、`/set scihub off`、`/dir ~/Papers`
+- `Esc` 停止当前任务，`Ctrl+C` 清空输入（连按两次退出）
+
 ## 第一次启动要填什么
 
 顶部有三个字段，**前两个建议第一件事就填**：

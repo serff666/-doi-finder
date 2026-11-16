@@ -19,6 +19,7 @@ if ! "$PY" -c 'import openpyxl, pypdf' 2>/dev/null; then
     || echo "[setup] could not install optional packages (Excel export / PDF guessing disabled)"
 fi
 
+[ "$1" = "tui" ] && exec "$PY" tui.py
 export DOIFINDER_PORT="${DOIFINDER_PORT:-8765}"
 echo "DOI Finder → http://127.0.0.1:${DOIFINDER_PORT}/   (Ctrl+C to quit)"
 exec "$PY" server.py
