@@ -16,9 +16,7 @@ settings.json.bak
 *.doi-index.json
 doifinder.log
 *.log
-title_zh.json
 oa_cache.json
-entitlements.json
 
 # 界面运行时数据
 browser-profile*/

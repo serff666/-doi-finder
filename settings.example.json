@@ -16,6 +16,7 @@
   "inst_login_url": "",
   "inst_timeout": 75,
   "inst_first": false,
+  "preprint_early": true,
 
   "elsevier_key": "",
   "elsevier_token": "",
