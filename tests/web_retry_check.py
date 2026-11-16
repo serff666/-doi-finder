@@ -32,8 +32,8 @@ window.__log = [];
   jobs.J1 = { get state() { return window.__jd.finish ? "done" : "running"; }, get paused() { return window.__jd.paused; },
     get done() { return window.__jd.finish ? 3 : 1; }, total: 3, current: "10.1000/j2", summary: "s", dest: "/d",
     get results() { return window.__jd.finish ? [
-      { doi: "10.1000/j1", status: "downloaded", file: "a.pdf" }, { doi: "10.1000/j2", status: "failed", note: "boom" },
-      { doi: "10.1000/j3", status: "no_oa" }] : [{ doi: "10.1000/j1", status: "downloaded", file: "a.pdf" }]; } };
+      { doi: "10.1000/j1", status: "downloaded", file: "a.pdf", source: "Sci-Hub" }, { doi: "10.1000/j2", status: "failed", note: "boom" },
+      { doi: "10.1000/j3", status: "no_oa" }] : [{ doi: "10.1000/j1", status: "downloaded", file: "a.pdf", source: "Sci-Hub" }]; } };
   jobs.J2 = { state: "done", done: 1, total: 1, dest: "/d", results: [{ doi: "10.1000/j2", status: "downloaded", file: "b.pdf" }] };
   jobs.J3 = { get state() { return window.__jd.stopped ? "stopped" : "running"; }, cancelled: false, done: 0, total: 3, results: [], dest: "/d" };
   const cand = (doi, title, level) => ({ doi, title, year: "2023", authors: ["A. Author"], level, why: "why-" + level, url: "https://doi.org/" + doi });
@@ -161,6 +161,7 @@ DRIVER = r"""
     ok("export lists only unfetched with header", /DOI,标题,状态/.test(csv) && /10\.1000\/j2/.test(csv) && /10\.1000\/j3/.test(csv) && !/10\.1000\/j1/.test(csv), csv);
     $("jdOnlyBad").click();
     ok("unticking shows everything", /10\.1000\/j1/.test($("jdResults").textContent));
+    ok("downloaded rows show the channel they came from", /下载渠道/.test($("jdResults").textContent) && /10\.1000\/j1\s*已下载\s*Sci-Hub/.test($("jdResults").textContent.replace(/\s+/g, " ")), $("jdResults").textContent);
     $("jdOnlyBad").click();
     ok("buttons reset, retry offered for 1", $("jdPause").hidden && $("jdStop").hidden && !$("jdRetry").hidden && $("jdRetry").textContent.includes("1") && !$("jdDownload").disabled, $("jdRetry").textContent);
     $("jdRetry").click();
