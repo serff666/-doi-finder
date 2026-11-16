@@ -94,10 +94,9 @@ def curl_bin() -> str:
 
 
 # ---- file / folder pickers -------------------------------------------------------------
-# The server answers from an HTTP worker thread. A Tk window opened there is unreliable in
-# the packaged Windows app (the dialog may never appear), so Windows uses the system dialogs
-# through PowerShell on its own STA thread; elsewhere Tk is used. Both block until the user
-# answers and return "" / [] when the dialog is cancelled.
+# The server answers from an HTTP worker thread, where a Tk window is unreliable (the dialog may
+# never appear). So the system dialogs are opened through PowerShell on its own STA thread. That is
+# the only path: Windows only, no fallback. Cancelling returns "" / []; any failure raises.
 
 _PS_PICK = r"""
 $ErrorActionPreference = 'Stop'
@@ -146,41 +145,21 @@ def _powershell_pick(kind: str, title: str, initial: str = "", filter_: str = ""
     return [ln.strip() for ln in out.splitlines() if ln.strip()]
 
 
-def _tk_pick(kind: str, title: str, initial: str = "", patterns: tuple = (), multi: bool = False) -> list[str]:
-    import tkinter as tk
-    from tkinter import filedialog
-    root = tk.Tk()
-    root.withdraw()
-    root.attributes("-topmost", True)
-    try:
-        if kind == "folder":
-            got = filedialog.askdirectory(title=title, initialdir=initial or None)
-            return [got] if got else []
-        types = [(n, pat.replace(";", " ")) for n, pat in patterns] + [("所有文件", "*.*")]
-        if multi:
-            return list(filedialog.askopenfilenames(title=title, filetypes=types) or ())
-        got = filedialog.askopenfilename(title=title, filetypes=types)
-        return [got] if got else []
-    finally:
-        root.destroy()
-
-
 def _filter_string(patterns: tuple) -> str:
     parts = [f"{name}|{pat}" for name, pat in patterns] + ["所有文件|*.*"]
     return "|".join(parts)
 
 
 def pick_folder(title: str, initial: str = "") -> str:
-    """Ask the user for a folder. "" when cancelled; raises if no dialog can be shown."""
-    if IS_WIN:                      # one path on Windows: the native dialog, no second implementation
-        got = _powershell_pick("folder", title, initial)
-        return got[0] if got else ""
-    got = _tk_pick("folder", title, initial)
+    """Ask the user for a folder. "" when cancelled. Windows only; raises elsewhere."""
+    if not IS_WIN:
+        raise RuntimeError("文件夹选择器只在 Windows 上提供，请直接输入路径")
+    got = _powershell_pick("folder", title, initial)
     return got[0] if got else ""
 
 
 def pick_files(title: str, patterns: tuple = (), multi: bool = False) -> list[str]:
-    """Ask the user for file(s). patterns: (("PDF", "*.pdf"), ...). [] when cancelled."""
-    if IS_WIN:
-        return _powershell_pick("file", title, filter_=_filter_string(patterns), multi=multi)
-    return _tk_pick("file", title, patterns=patterns, multi=multi)
+    """Ask the user for file(s). patterns: (("PDF", "*.pdf"), ...). [] when cancelled. Windows only."""
+    if not IS_WIN:
+        raise RuntimeError("文件选择器只在 Windows 上提供，请直接输入路径")
+    return _powershell_pick("file", title, filter_=_filter_string(patterns), multi=multi)
