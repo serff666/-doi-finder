@@ -2,6 +2,7 @@
 
 ```bash
 sudo apt install python3 python3-venv     # Fedora: sudo dnf install python3
+sudo apt install python3-tk               # for the folder/file pickers (Fedora: python3-tkinter); without it type the path instead
 ./run.sh                                  # opens http://127.0.0.1:8765/
 DOIFINDER_PORT=8790 DOIFINDER_NO_BROWSER=1 ./run.sh   # custom port / headless
 ./install-desktop.sh                      # optional: application-menu entry

@@ -41,7 +41,7 @@
   const ATTRS = ["placeholder", "title", "aria-label"];
   let lang = "zh";
   let titleZh = null;     // 页面标题的中文原文
-  let busy = false;
+  let obs = null;          // MutationObserver；我们自己造成的变更记录用 takeRecords() 丢掉，而不是靠忙碌标志（忙碌期间别人写入的内容会被误丢）
 
   const hasCJK = (t) => /[一-鿿]/.test(t || "");
   const norm = (t) => (t || "").replace(/\s+/g, " ").trim();
@@ -212,7 +212,6 @@
   function apply(next) {
     lang = next === "en" ? "en" : "zh";
     document.documentElement.lang = lang === "en" ? "en" : "zh-CN";
-    busy = true;
     snapshotElements();
     swapTexts(lang);
     swapElements(lang === "en" ? (window.DF_EN || {}) : null);
@@ -227,7 +226,8 @@
     try { localStorage.setItem("df_lang", lang); } catch {}
     // app.js 里程序拼出来的文字（路径预览、占位符等）在这里重算
     document.dispatchEvent(new CustomEvent("doifinder:lang", { detail: { lang } }));
-    setTimeout(() => { busy = false; }, 0);
+    if (lang === "en") { snapshotElements(); swapTexts("en"); swapElements(window.DF_EN || {}); }
+    if (obs) obs.takeRecords();
   }
 
   function current() {
@@ -252,13 +252,12 @@
     apply(current());
 
     // 表格、提示语都是运行时生成的，DOM 一变就补一次翻译
-    const obs = new MutationObserver(() => {
-      if (busy || lang !== "en") return;
-      busy = true;
+    obs = new MutationObserver(() => {
+      if (lang !== "en") return;
       snapshotElements();
       swapTexts("en");
       swapElements(window.DF_EN || {});
-      setTimeout(() => { busy = false; }, 0);
+      obs.takeRecords();      // 上面这几步自己改了 DOM，这些记录不用再处理
     });
     obs.observe(document.body, {
       childList: true, subtree: true, characterData: true,
