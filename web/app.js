@@ -96,6 +96,11 @@ window.addEventListener("unhandledrejection", (e) => {
     document.querySelectorAll(".tabpanel").forEach((p) => { p.hidden = p.id !== "tab-" + name; });
   }
   document.querySelectorAll("#tabs button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+  // in-page links such as "more settings ->" use data-goto="<tab>"
+  document.addEventListener("click", (e) => {
+    const g = e.target.closest("[data-goto]");
+    if (g) showTab(g.dataset.goto);
+  });
 
   /* ================================================================ 1. titles → DOI */
   const NUM = /^\s*(?:\[\s*\d+\s*\]|\(\s*\d+\s*\)|\d+\s*[.)\]:]|#\s*\d+)\s+/;
@@ -1039,6 +1044,8 @@ window.addEventListener("unhandledrejection", (e) => {
       toast("设置已保存");
     } catch (e) { toast("保存失败：" + e.message); }
   });
+
+  $("saveSettings2").addEventListener("click", () => $("saveSettings").click());
 
   async function refreshInstStatus() {
     try {

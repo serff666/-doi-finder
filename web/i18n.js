@@ -20,6 +20,8 @@
     { sel: '#tabs button[data-tab="rg"]', zh: "⑥ ResearchGate", en: "⑥ ResearchGate" },
     { sel: '#tabs button[data-tab="archive"]', zh: "⑦ 归档", en: "⑦ Archive" },
     { sel: '#tabs button[data-tab="lab"]', zh: "⑧ 网页文献", en: "⑧ Lab pages" },
+    { sel: '#tabs button[data-tab="journaldl"]', zh: "⑨ 期刊文库", en: "⑨ Journal library" },
+    { sel: '#tabs button[data-tab="settings"]', zh: "⚙ 设置", en: "⚙ Settings" },
     { sel: "#start", zh: "开始批量检索", en: "Start batch lookup" },
     { sel: "#startDownload", zh: "⇩ 开始下载", en: "⇩ Start download" },
     { sel: "#pauseDownload", zh: "暂停", en: "Pause" },
