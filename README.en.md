@@ -1,7 +1,7 @@
 # DOI Finder
 
-**From a list of paper titles to a tidy local library of PDFs.**
-A tool that runs on your own computer: it resolves titles (or whole reference strings) to DOIs, then picks the right route per publisher to download the PDFs and name them consistently.
+**From "I need these papers" to a tidy local library of PDFs.**
+A literature search, tracking and bulk-download tool that runs on your own computer. Have titles or references? It resolves them to DOIs and fetches the full texts. No list yet? Search by topic, author, ORCID, journal or a lab's publications page. Then it picks the right route per publisher, downloads the PDFs and files them into your workspace by one consistent rule.
 
 The UI runs in your browser at `http://127.0.0.1:8765/`. No account, no registration; your data and keys stay on your machine.
 Windows desktop app that also runs from source on Linux (see [README.linux.md](README.linux.md)).
@@ -17,9 +17,14 @@ Windows desktop app that also runs from source on Linux (see [README.linux.md](R
 
 ## The problem
 
-You have dozens or hundreds of titles, or a reference list, and want the full texts. Searching each DOI by hand is error-prone; each publisher page is different (open access, subscription, captcha); and afterwards file names are a mess and you lose track of what you already have.
+Papers usually start from one of two places:
 
-DOI Finder chains those steps into one pipeline and **tells you, at every step, how trustworthy the result is and why something failed.**
+- **You already have a list**: dozens or hundreds of titles, or a reference list, and you want the full texts.
+- **You do not have a list yet**: you want everything a topic, an author, a journal or a lab has published.
+
+Either way you hit the same problems. Searching each DOI by hand is error-prone; each publisher page is different (open access, subscription, captcha); and afterwards file names are a mess, you lose track of what you already have, and the same paper ends up in several folders.
+
+DOI Finder chains finding, downloading and filing into one pipeline and **tells you, at every step, how trustworthy the result is and why something failed.**
 
 ## Highlights
 
