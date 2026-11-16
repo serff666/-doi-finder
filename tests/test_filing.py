@@ -195,3 +195,26 @@ def test_find_year_ignores_digits_inside_longer_numbers():
 def test_archive_year_from_doi_like_file_name(tmp_path):
     import labpage
     assert labpage.parse_block("Tan J. Unraveling the Mechanism. J. Org. Chem. 2025, 90, 2052–2061")["year"] == "2025"
+
+
+FIRST_PAGE_JOC = """The Journal of Organic Chemistry pubs.acs.org/joc Article
+Unraveling the Mechanism and Influence of Auxiliary Ligands on the Isomerization of Neutral [P,O]-Chelated Nickel Complexes for Olefin Polymerization
+Jeremy Tan, Jingyi Liu, and Xinglong Zhang
+Cite This: J. Org. Chem. 2025, 90, 2052−2061 Read Online
+Downloaded via 101.127.180.194 on February 25, 2025 at 04:24:37 (UTC).
+Further advancement in the field came in 2000, when Grubbs and coworkers reported the use of
+neutral salicylaldimine nickel catalysts. Shortly after, Drent and coworkers in 2002 showed that
+palladium catalysts ... accounted for 34% of the entire plastic market in 2017."""
+
+
+def test_year_from_first_page_prefers_the_citation_line():
+    # the body names 2000, 2002 and 2017; the paper is from 2025
+    assert filing.year_from_first_page(FIRST_PAGE_JOC) == "2025"
+
+
+def test_year_from_first_page_other_sources_and_fallback():
+    assert filing.year_from_first_page("Chem. Sci., 2024, 15, 100\nin 2030 and 2031") == "2024"
+    assert filing.year_from_first_page("Foo\nPublished: 3 March 2023\nafter 2001 work") == "2023"
+    assert filing.year_from_first_page("Foo\n© 2022 The Authors\nsince 1999") == "2022"
+    assert filing.year_from_first_page("no marker but 2018 and 2021 appear") == "2021"
+    assert filing.year_from_first_page("") == "" and filing.year_from_first_page("page 12345") == ""

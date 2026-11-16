@@ -185,8 +185,9 @@ def _pdf_year(path: str) -> str:
                 text = (reader.pages[0].extract_text() or "")[:4000]
         except Exception:  # noqa: BLE001
             return ""
-    # 版权行常出现多个年份，取最靠后的一个（通常是出版年）；页码、DOI 尾号里的数字不算
-    return filing.find_year(text, last=True)
+    # 首页正文也会提到别人的旧论文年份（"... in 2002 ..."），所以先认引用行
+    # "J. Org. Chem. 2025, 90, 2052–2061"，再认发表日期、版权行，最后才取最新的年份
+    return filing.year_from_first_page(text)
 
 def _pdf_title(src: str) -> str:
     """Best-effort title from the PDF's own /Title entry (no third-party lib)."""
