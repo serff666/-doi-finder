@@ -25,6 +25,8 @@ Also: journal feed, lab-page scraping, and reference export. Windows desktop app
 | ⑦ Archive | a local PDF | renamed and filed into your library |
 | ⑧ Lab pages | a group's publications page | titles, DOIs and PDF links from that page |
 
+Pasted BibTeX / RIS is matched on more than the title: the year, first author and journal are compared with each candidate. A year two or more apart, or a first author who is none of the listed authors, lowers the status by one level and says so in the note; a missing field never counts against a match. When year and first author both agree and the title similarity is at least 0.70, an "uncertain" match is raised to "likely". Same-title records (a preprint and its journal version) are told apart by year, and the other one stays in the alternates.
+
 ## Install and run
 
 Installed build: the `DOI Finder` shortcut, or `%LOCALAPPDATA%\Programs\DOI Finder\DOI Finder.exe`.

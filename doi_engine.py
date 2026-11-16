@@ -88,6 +88,139 @@ def similarity(a: str, b: str) -> float:
     return round(0.30 * cover_q + 0.25 * cover_c + 0.25 * jac + 0.20 * seq, 4)
 
 
+# ----------------------------------------------------------------------------- field evidence
+# Title similarity alone cannot tell two records with the same title apart (a preprint and its
+# journal version, "Introduction", a review series). When the input carries a year, a first
+# author or a journal (BibTeX/RIS do), those fields are compared with each candidate.
+#
+# Rules, chosen so that a false alarm costs little and a miss is never hidden:
+#   * only a clear contradiction counts against a candidate (year >= 2 apart, or the first
+#     author's surname absent from every author the record lists);
+#   * a missing field on either side is "unknown", never a penalty;
+#   * a contradiction demotes one status level per field and never discards the record;
+#   * the journal is positive-only evidence (abbreviations make a mismatch unprovable).
+_YEAR_RE = re.compile(r"(?<!\d)(1[6-9]\d\d|20\d\d)(?!\d)")
+_RANK_ADJ = {
+    "year": {"match": 0.03, "near": 0.015, "mismatch": -0.10},
+    "author": {"match": 0.03, "partial": 0.01, "mismatch": -0.10},
+    "journal": {"match": 0.01},
+}
+_LEVELS = ("uncertain", "likely", "matched")
+PROMOTE_FLOOR = 0.70      # title similarity needed before year+author may lift uncertain -> likely
+
+
+def parse_year(v) -> int | None:
+    """First plausible 4-digit year in `v` ("2019/2020" -> 2019); None if there is none."""
+    if v is None:
+        return None
+    m = _YEAR_RE.search(str(v))
+    return int(m.group(1)) if m else None
+
+
+def _surname_key(name: str) -> str:
+    """The distinctive surname token of a typed author name, "" if nothing readable.
+
+    "Smith, Ann" / "Ann Smith" / "Smith A" / "A. Smith" -> smith;
+    "{van der Berg}, Jan" -> berg;  "张伟" -> "" (nothing to compare in ASCII).
+    """
+    name = (name or "").strip()
+    head = name.split(",", 1)[0] if "," in name else name
+    toks = norm_text(head).split()
+    if "," not in name:
+        toks = [t for t in toks if len(t) > 1] or toks      # drop bare initials
+    return toks[-1] if toks else ""
+
+
+def _tok_eq(key: str, tok: str) -> bool:
+    if key == tok:
+        return True
+    # "Mueller" ~ "Muller": forgive transliteration, but never for short names (li ~ lee)
+    return len(key) >= 4 and len(tok) >= 4 and SequenceMatcher(None, key, tok).ratio() >= 0.82
+
+
+def _has_name(key: str, author: str) -> bool:
+    return any(_tok_eq(key, t) for t in norm_text(author).split())
+
+
+def hint_matches(hint: str, authors: list[str]) -> bool:
+    """Does the typed surname occur as a whole name token in any listed author?"""
+    key = _surname_key(hint)
+    return bool(key) and any(_has_name(key, a) for a in authors or [])
+
+
+def journal_matches(typed: str, listed: str) -> bool:
+    """Abbreviation-tolerant: same number of content words, each typed word a prefix of its
+    counterpart ("J. Chem. Phys." ~ "The Journal of Chemical Physics"). Positive-only."""
+    a = [t for t in norm_text(typed).split() if t not in STOP]
+    b = [t for t in norm_text(listed).split() if t not in STOP]
+    return bool(a) and len(a) == len(b) and all(y.startswith(x) for x, y in zip(a, b))
+
+
+def norm_expect(expect: dict | None) -> dict:
+    """Keep only the expectations that are actually usable."""
+    out: dict = {}
+    if not isinstance(expect, dict) or not expect:
+        return out
+    y = parse_year(expect.get("year"))
+    if y:
+        out["year"] = y
+    for k in ("author", "journal"):
+        v = str(expect.get(k) or "").strip()
+        if re.search(r"[^\W\d_]", v):          # needs at least one letter; "123" is not a name
+            out[k] = v
+    return out
+
+
+def field_evidence(c: dict, exp: dict) -> dict:
+    """{"year": match|near|mismatch|unknown, "author": match|partial|mismatch|unknown,
+    "journal": match|unknown} for the fields present in `exp`."""
+    ev: dict = {}
+    if "year" in exp:
+        cy = parse_year(c.get("year"))
+        if cy is None:
+            ev["year"] = "unknown"
+        else:
+            d = abs(cy - exp["year"])
+            ev["year"] = "match" if d == 0 else "near" if d == 1 else "mismatch"
+    if "author" in exp:
+        key = _surname_key(exp["author"])
+        authors = [a for a in (c.get("authors") or []) if a and a.strip()]
+        if not key or not authors or not norm_text(authors[0]):
+            ev["author"] = "unknown"
+        elif _has_name(key, authors[0]):
+            ev["author"] = "match"
+        elif any(_has_name(key, a) for a in authors[1:]):
+            ev["author"] = "partial"
+        else:
+            ev["author"] = "mismatch"
+    if "journal" in exp:
+        ev["journal"] = "match" if journal_matches(exp["journal"], c.get("journal") or "") \
+            else "unknown"
+    return ev
+
+
+def evidence_adjust(ev: dict) -> float:
+    return sum(_RANK_ADJ.get(k, {}).get(v, 0.0) for k, v in (ev or {}).items())
+
+
+def expect_key(entry: dict) -> str:
+    """Everything besides the title that changes what resolve() returns for this entry.
+
+    Used for the dedup map and the on-disk cache so that two rows with the same title but a
+    different year / author / supplied DOI / reference string are never merged."""
+    parts = []
+    exp = norm_expect(entry)
+    if exp:
+        parts.append("y=%s;a=%s;j=%s" % (exp.get("year", ""), norm_text(exp.get("author", "")),
+                                         norm_text(exp.get("journal", ""))))
+    if entry.get("doi"):
+        parts.append("d=" + str(entry["doi"]).strip().lower())
+    raw = NUM_PREFIX_RE.sub("", entry.get("input") or "").strip()
+    if raw and validation.looks_scoreable(raw):
+        parts.append("r=" + norm_text(raw))
+    return "|".join(parts)
+
+
 # ----------------------------------------------------------------------------- parsing
 def extract_doi(s: str) -> str | None:
     m = DOI_RE.search(s or "")
@@ -138,7 +271,8 @@ def parse_entries(text: str, mode: str = "auto") -> list[dict]:
         return [{"n": i + 1, "input": (e.get("title") or e.get("doi") or ""),
                  "title": e.get("title") or "", "doi": (e.get("doi") or "").lower(),
                  "numbered": False, "journal": e.get("journal") or "",
-                 "year": e.get("year") or ""} for i, e in enumerate(struct)]
+                 "year": e.get("year") or "", "author": e.get("author") or ""}
+                for i, e in enumerate(struct)]
 
     entries: list[dict] = []
     for raw in (text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n"):
@@ -208,16 +342,26 @@ def crossref_items(http: Http, query: str, rows: int = 10, author: str | None = 
 
 def openalex_items(http: Http, query: str, rows: int = 5) -> list[dict]:
     params = {"per-page": rows, "search": query,
-              "select": "doi,title,publication_year,primary_location,type"}
-    data = http.get_json(f"{OPENALEX}?{urllib.parse.urlencode(params)}")
+              "select": "doi,title,publication_year,primary_location,type,authorships"}
+    try:
+        data = http.get_json(f"{OPENALEX}?{urllib.parse.urlencode(params)}")
+    except RuntimeError as e:
+        # A rejected field list must not silently switch the whole fallback off.
+        if str(e) != "HTTP 400":
+            raise
+        params["select"] = "doi,title,publication_year,primary_location,type"
+        data = http.get_json(f"{OPENALEX}?{urllib.parse.urlencode(params)}")
     out = []
     for it in data.get("results", []) or []:
         year = it.get("publication_year")
         src = ((it.get("primary_location") or {}).get("source") or {}).get("display_name") or ""
+        names = [((a or {}).get("author") or {}).get("display_name") or ""
+                 for a in (it.get("authorships") or [])]
         out.append({"DOI": (it.get("doi") or "").replace("https://doi.org/", ""),
                     "title": [it.get("title") or ""],
                     "issued": {"date-parts": [[year]]} if year else {},
-                    "container-title": [src], "type": it.get("type"), "author": []})
+                    "container-title": [src], "type": it.get("type"),
+                    "author": [{"name": n} for n in names if n.strip()]})
     return out
 
 
@@ -233,8 +377,12 @@ def to_candidate(item: dict, source: str) -> dict | None:
         year = item["issued"]["date-parts"][0][0]
     except Exception:  # noqa: BLE001
         pass
-    authors = [f"{(a.get('given') or '')} {(a.get('family') or '')}".strip()
-               for a in (item.get("author") or [])]
+    authors = []
+    for a in (item.get("author") or []):
+        # organisations come as {"name": ...}; an empty entry must not become "first author"
+        n = f"{(a.get('given') or '')} {(a.get('family') or '')}".strip() or (a.get("name") or "").strip()
+        if n:
+            authors.append(n)
     return {"doi": doi, "title": title, "year": year,
             "journal": (item.get("container-title") or [""])[0] if item.get("container-title") else "",
             "volume": item.get("volume") or "", "issue": item.get("issue") or "",
@@ -257,10 +405,17 @@ def _score_all(cands: list[dict], title: str, author_hint: str | None) -> list[d
         # almost never the version of record
         if c["source"] == "crossref" and not c["authors"]:
             c["score"] = round(max(0.0, c["score"] - 0.05), 4)
-        if author_hint and c["authors"]:
-            if author_hint.split()[-1].lower() in " ".join(c["authors"]).lower():
-                c["score"] = round(min(1.0, c["score"] + 0.06), 4)
+        if author_hint and c["authors"] and hint_matches(author_hint, c["authors"]):
+            c["score"] = round(min(1.0, c["score"] + 0.06), 4)
     return sorted(cands, key=lambda x: x["score"], reverse=True)
+
+
+def _alt(c: dict, with_evidence: bool = False) -> dict:
+    a = {k: c[k] for k in ("doi", "title", "year", "journal", "score", "source")}
+    a["first_author"] = (c.get("authors") or [""])[0]
+    if with_evidence and c.get("ev"):
+        a["evidence"] = c["ev"]
+    return a
 
 
 SPECIAL_KINDS = ("erratum", "correction", "addendum", "comment", "reply")
@@ -303,13 +458,18 @@ def _apply_validation(pool: list[dict], raw: str) -> dict | None:
 
 def resolve(title: str, http: Http, author_hint: str | None = None, rows: int = 10,
             provided_doi: str | None = None, use_openalex: bool = True,
-            raw: str = "") -> dict:
+            raw: str = "", expect: dict | None = None) -> dict:
     """Resolve one title to a DOI plus alternates. Never raises.
 
     `raw` is the original input line. When it looks like a full reference we also
     run field validation, which is far better at rejecting a plausible-looking
     wrong DOI than title similarity alone.
+
+    `expect` ({"year", "author", "journal"}, any subset) carries what a structured
+    input (BibTeX/RIS) says about the work. It re-ranks candidates and can demote a
+    match whose year or first author clearly disagrees; see field_evidence().
     """
+    exp = norm_expect(expect)
     res = {"doi": "", "status": "not_found", "score": 0.0, "match_title": "", "year": None,
            "journal": "", "volume": "", "page": "", "type": "", "source": "",
            "alts": [], "note": "", "provided_doi": provided_doi or ""}
@@ -324,7 +484,8 @@ def resolve(title: str, http: Http, author_hint: str | None = None, rows: int = 
                 if c:
                     c["score"] = similarity(title, c["title"])
                     pool.append(c)
-                    res["note"] = "DOI supplied in input, verified"
+                    res["note"] = ("DOI supplied in input, title agrees" if c["score"] >= 0.85
+                                   else "DOI supplied in input, but its Crossref title differs")
             except Exception:  # noqa: BLE001 - unregistered DOIs exist (arXiv, books)
                 res["note"] = "DOI supplied in input (could not verify via Crossref)"
 
@@ -353,9 +514,14 @@ def resolve(title: str, http: Http, author_hint: str | None = None, rows: int = 
         # 1. full title, bibliographic relevance search
         attempt(variants[0], "bibliographic")
 
-        # 2. precise title-field search (noise prefix removed, author hint if given)
-        if best is None or best["score"] < 0.97:
-            attempt(variants[1] if len(variants) > 1 else variants[0], "title", author_hint)
+        # 2. precise title-field search (noise prefix removed, author hint if given). Also
+        #    when the leader's year / first author contradicts the input: same-title records
+        #    (preprint vs journal, "Introduction") may be sitting just below the first page.
+        contradicted = bool(exp and best is not None and any(
+            v == "mismatch" for v in field_evidence(best, exp).values()))
+        if best is None or best["score"] < 0.97 or contradicted:
+            attempt(variants[1] if len(variants) > 1 else variants[0], "title",
+                    author_hint or _surname_key(exp.get("author", "")) or None)
 
         # 3. OpenAlex exact-title fallback for stubborn rows
         if use_openalex and (best is None or best["score"] < 0.90):
@@ -371,8 +537,19 @@ def resolve(title: str, http: Http, author_hint: str | None = None, rows: int = 
 
         # 4. "Erratum on X" / "Comment on X" should not resolve to X itself
         pool = _apply_special(title, pool)
+        for c in pool:
+            c["ev"] = field_evidence(c, exp) if exp else {}
+
+        def rank(c: dict) -> float:
+            return c["score"] + evidence_adjust(c.get("ev"))
+
         if pool:
-            best = max(pool, key=lambda c: c["score"])
+            best = max(pool, key=rank)
+            # a DOI the user typed and whose own Crossref title agrees is the answer; a better
+            # looking sibling (preprint/version of record) is offered as an alternate instead
+            mine = next((c for c in pool if c["source"] == "provided"), None)
+            if mine is not None and mine["score"] >= 0.85:
+                best = mine
 
         # 4.5 full-reference input: let the bibliographic numbers decide
         weak_reference = False
@@ -401,14 +578,14 @@ def resolve(title: str, http: Http, author_hint: str | None = None, rows: int = 
         if not pool or best is None:
             return res
 
-        pool.sort(key=lambda x: x["score"], reverse=True)
+        pool.sort(key=rank, reverse=True)
         seen = {best["doi"]}
         alts = []
         for c in pool:
             if c["doi"] in seen:
                 continue
             seen.add(c["doi"])
-            alts.append({k: c[k] for k in ("doi", "title", "year", "journal", "score", "source")})
+            alts.append(_alt(c, bool(exp)))
             if len(alts) == 4:
                 break
 
@@ -429,14 +606,36 @@ def resolve(title: str, http: Http, author_hint: str | None = None, rows: int = 
         else:
             # nothing close enough to claim: surface the best guess only as an alternative
             res.update({"status": "not_found", "score": round(s, 4),
-                        "alts": ([{k: best[k] for k in ("doi", "title", "year", "journal",
-                                                       "score", "source")}] + alts)[:4],
+                        "alts": ([_alt(best, bool(exp))] + alts)[:4],
                         "note": (res["note"] + "; " if res["note"] else "") + "no confident match"})
             return res
 
         if weak_reference:
             status = {"matched": "likely", "likely": "uncertain"}.get(status, status)
             res["note"] = (res["note"] + "; " if res["note"] else "") + "demoted: unverified reference"
+
+        ev = best.get("ev") or {}
+        if exp:
+            bad = [k for k in ("year", "author") if ev.get(k) == "mismatch"]
+            notes = []
+            if "year" in bad:
+                notes.append(f"year differs (input {exp['year']}, record {parse_year(best.get('year'))})")
+            if "author" in bad:
+                first = (best.get("authors") or [""])[0]
+                notes.append(f"first author differs (input {exp['author']}, record {first})")
+            if bad:
+                status = _LEVELS[max(0, _LEVELS.index(status) - len(bad))]
+            elif (status == "uncertain" and not weak_reference and s >= PROMOTE_FLOOR
+                  and ev.get("year") == "match" and ev.get("author") == "match"):
+                status = "likely"
+                notes.append("year and first author agree")
+            if notes:
+                joined = "; ".join(notes)
+                # a contradiction is what the reader must see first (the terminal client
+                # shows only the first clause of a note)
+                res["note"] = (joined + "; " + res["note"] if res["note"] else joined) if bad \
+                    else (res["note"] + "; " if res["note"] else "") + joined
+            res["evidence"] = ev
 
         res.update({"doi": best["doi"], "status": status, "score": round(s, 4),
                     "match_title": best["title"], "year": best["year"], "journal": best["journal"],
@@ -473,17 +672,19 @@ class Cache:
                 self.data = {}
 
     @staticmethod
-    def key(title: str, author: str | None) -> str:
-        return norm_text(title) + "||" + norm_text(author or "")
+    def key(title: str, author: str | None, extra: str = "") -> str:
+        # plain titles keep the historical key, so existing cache files stay valid
+        k = norm_text(title) + "||" + norm_text(author or "")
+        return k + "||" + extra if extra else k
 
-    def get(self, title: str, author: str | None):
+    def get(self, title: str, author: str | None, extra: str = ""):
         with self.lock:
-            hit = self.data.get(self.key(title, author))
+            hit = self.data.get(self.key(title, author, extra))
             return json.loads(json.dumps(hit)) if hit else None
 
-    def put(self, title: str, author: str | None, value: dict):
+    def put(self, title: str, author: str | None, value: dict, extra: str = ""):
         with self.lock:
-            self.data[self.key(title, author)] = json.loads(json.dumps(value))
+            self.data[self.key(title, author, extra)] = json.loads(json.dumps(value))
 
     def flush(self):
         if not self.path:
@@ -520,27 +721,28 @@ def lookup_all(entries: list[dict], author_hint: str | None = None, rows: int = 
                     progress(done, len(entries))
             return
 
-        key = norm_text(entry["title"])
+        extra = expect_key(entry)
+        key = norm_text(entry["title"]) + "||" + extra
         hit = None
         if dedup:
             with lock:
                 hit = seen.get(key)
         if hit is None and cache:
-            hit = cache.get(entry["title"], author_hint)
+            hit = cache.get(entry["title"], author_hint, extra)
         if hit:
             res = dict(hit)
             res["cached"] = True
         else:
             try:
                 res = resolve(entry["title"], http, author_hint, rows, entry.get("doi"),
-                              use_openalex, raw=entry.get("input") or "")
+                              use_openalex, raw=entry.get("input") or "", expect=entry)
             except Exception as e:  # noqa: BLE001 - 一条失败不能拖垮整批 485 条
                 res = {"status": "error", "doi": "", "score": 0.0, "alts": [],
                        "note": f"{type(e).__name__}: {str(e)[:60]}"}
             res["cached"] = False
             # never cache a miss caused by a network error, only genuine no-matches
             if cache and res.get("status") not in ("error", "not_found"):
-                cache.put(entry["title"], author_hint, res)
+                cache.put(entry["title"], author_hint, res, extra)
             if dedup and res.get("status") not in ("error",):
                 with lock:
                     seen[key] = res
@@ -575,7 +777,7 @@ def lookup_all(entries: list[dict], author_hint: str | None = None, rows: int = 
                 progress(len(entries), len(entries))
             try:
                 again = resolve(e["title"], calm, author_hint, rows, e.get("doi"), use_openalex,
-                                raw=e.get("input") or "")
+                                raw=e.get("input") or "", expect=e)
             except Exception:  # noqa: BLE001
                 continue
             prev = results[i] or {}
@@ -584,7 +786,7 @@ def lookup_all(entries: list[dict], author_hint: str | None = None, rows: int = 
                               "provided_doi": e.get("doi") or "", "cached": False, "retried": True})
                 results[i] = again
                 if cache and again.get("status") not in ("error", "not_found"):
-                    cache.put(e["title"], author_hint, again)
+                    cache.put(e["title"], author_hint, again, expect_key(e))
             time.sleep(0.7)
 
     if cache:
