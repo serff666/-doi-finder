@@ -15,7 +15,9 @@ class _FakeTk:
     def __init__(self):
         _FakeTk.log.append("Tk")
 
-    def withdraw(self): _FakeTk.log.append("withdraw")
+    def overrideredirect(self, *a): _FakeTk.log.append("overrideredirect")
+    def geometry(self, *a): _FakeTk.log.append("geometry")
+    def focus_force(self): _FakeTk.log.append("focus_force")
     def attributes(self, *a): _FakeTk.log.append(("attributes",) + a)
     def lift(self): _FakeTk.log.append("lift")
     def update(self): _FakeTk.log.append("update")
@@ -48,8 +50,11 @@ def _install(monkeypatch, **answers):
 
 def test_folder_dialog_is_raised_before_it_opens(monkeypatch):
     seen = _install(monkeypatch, askdirectory="D:\\papers")
+    monkeypatch.setattr(pu, "_force_foreground", lambda root: _FakeTk.log.append("foreground"))
     assert pu.pick_folder("t", "C:\\x") == "D:\\papers"
     log = _FakeTk.log
+    assert "withdraw" not in log                      # a withdrawn owner cannot hold the foreground
+    assert log.index("foreground") < log.index("askdirectory") and log.index("focus_force") < log.index("foreground")
     assert log.index(("attributes", "-topmost", True)) < log.index("askdirectory")
     assert log.index("lift") < log.index("askdirectory") and log.index("update") < log.index("askdirectory")
     assert log[-1] == "destroy"

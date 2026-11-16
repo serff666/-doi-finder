@@ -96,12 +96,36 @@ def curl_bin() -> str:
 # ---- file / folder pickers -------------------------------------------------------------
 # One implementation, tkinter, on every platform; no fallback. It is the path that is known to open
 # on the target machines (the PowerShell dialog returned an empty answer without showing anything).
-# The invisible root window is made top-most, lifted and updated *before* the dialog is shown,
-# otherwise the dialog can open behind the browser. One dialog at a time. Cancel -> "" / [];
+# The owner window is a 1x1 transparent top-most window that is given the foreground *before* the
+# dialog is shown (on Windows the dialog is otherwise top-most but without focus). One dialog at a time. Cancel -> "" / [];
 # any failure raises, and the server reports it.
 import threading  # noqa: E402
 
 _PICK_LOCK = threading.Lock()
+
+
+def _force_foreground(root) -> None:
+    """Give the (tiny, invisible) owner window the keyboard focus, so the dialog opened on it does too.
+
+    Measured on a real machine: Tk's -topmost put the dialog on top but it was not the foreground
+    window (no keyboard focus). Windows' foreground lock silently ignores SetForegroundWindow from a
+    background process; tapping Alt first lifts it. Best effort by design: if it fails, the dialog
+    still opens, just without focus.
+    """
+    if not IS_WIN:
+        return
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        hwnd = user32.GetParent(root.winfo_id()) or root.winfo_id()   # Tk's real top-level window
+        user32.keybd_event(0x12, 0, 0, 0)       # Alt down
+        user32.keybd_event(0x12, 0, 2, 0)       # Alt up
+        user32.ShowWindow(hwnd, 5)              # SW_SHOW
+        user32.BringWindowToTop(hwnd)
+        user32.SetForegroundWindow(hwnd)
+        user32.SetActiveWindow(hwnd)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _tk_pick(kind: str, title: str, initial: str = "", patterns: tuple = (), multi: bool = False) -> list[str]:
@@ -110,10 +134,16 @@ def _tk_pick(kind: str, title: str, initial: str = "", patterns: tuple = (), mul
     with _PICK_LOCK:
         root = tk.Tk()
         try:
-            root.withdraw()
+            # The owner must be a real, shown window to be able to hold the foreground, so it is
+            # not withdrawn: a 1x1 fully transparent top-most window instead.
+            root.overrideredirect(True)
+            root.geometry("1x1+0+0")
+            root.attributes("-alpha", 0.0)
             root.attributes("-topmost", True)
-            root.lift()
             root.update()
+            root.lift()
+            root.focus_force()
+            _force_foreground(root)
             if kind == "folder":
                 got = filedialog.askdirectory(parent=root, title=title, initialdir=initial or None, mustexist=True)
                 return [got] if got else []
