@@ -337,3 +337,11 @@ tr.editing > td { background: #eef3ff; }
 .pp-row { border: 1px solid #e6eaf3; border-radius: 12px; padding: 10px 14px; margin: 10px 0; background: #fff; }
 .pp-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin-bottom: 6px; }
 .pp-row .results-table { margin: 0; }
+
+/* 每页自己的下载设置 */
+.dl-opts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0 6px; padding: 8px 12px;
+  border: 1px dashed #cfd8ea; border-radius: 12px; background: #fafbff; }
+.dl-opts-t { font-size: 12px; color: #6b7690; font-weight: 600; }
+.dl-opts .dl-dir { flex: 1 1 260px; min-width: 200px; }
+.dl-restools { display: flex; align-items: center; gap: 12px; margin: 6px 0; }
+.dl-opts select.smallinput { width: auto; flex: 0 0 auto; }

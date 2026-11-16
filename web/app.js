@@ -1111,6 +1111,7 @@ window.addEventListener("unhandledrejection", (e) => {
       renderOrcidBar();
       if (d.version) $("verText").textContent = d.version + (d.build ? ` · ${d.build}` : "");
       refreshInstStatus();
+      document.dispatchEvent(new Event("doifinder:settings"));
       if (d.frozen) $("quit").hidden = false;
     } catch { /* ignore */ }
   }
@@ -1224,7 +1225,16 @@ window.addEventListener("unhandledrejection", (e) => {
   function makeDlPanel(prefix, slot, opts) {
     opts = opts || {};
     const P = (n) => prefix + n;
-    slot.innerHTML = `<div id="${P("Panel")}" class="run-panel" hidden role="status" aria-live="polite">
+    slot.innerHTML = `<div class="dl-opts" id="${P("Opts")}">
+        <span class="dl-opts-t">本页下载设置</span>
+        <input class="smallinput dl-dir" id="${P("Dir")}" type="text" spellcheck="false" placeholder="下载目录（留空 = 用最上面的默认目录）">
+        <button class="btn sm" id="${P("Pick")}" type="button">选择…</button>
+        <button class="btn sm" id="${P("Open")}" type="button">打开</button>
+        <label class="setting inline"><input id="${P("Sci")}" type="checkbox"><span>Sci-Hub</span></label>
+        <label class="setting inline"><input id="${P("Inst")}" type="checkbox"><span>机构浏览器</span></label>
+        <select class="smallinput" id="${P("Workers")}" title="并发"><option value="1">并发 1</option><option value="3">并发 3</option><option value="5">并发 5</option></select>
+      </div>
+      <div id="${P("Panel")}" class="run-panel" hidden role="status" aria-live="polite">
         <div class="run-head">
           <strong id="${P("RunTitle")}"></strong>
           <span class="run-btns">
@@ -1238,7 +1248,12 @@ window.addEventListener("unhandledrejection", (e) => {
         <div class="aux" id="${P("Prog")}"></div>
         <div class="aux" id="${P("Current")}"></div>
       </div>
-      <details id="${P("ResultsWrap")}" hidden><summary>下载明细</summary><div id="${P("Results")}"></div></details>`;
+      <details id="${P("ResultsWrap")}" hidden open><summary id="${P("ResSum")}">下载明细</summary>
+        <div class="dl-restools">
+          <label class="setting inline"><input id="${P("OnlyBad")}" type="checkbox" checked><span>只看未获取</span></label>
+          <button class="btn sm" id="${P("Export")}" type="button">导出未获取清单</button>
+        </div>
+        <div id="${P("Results")}"></div></details>`;
     const G = (n) => document.getElementById(P(n));
     const S = { rows: new Map(), picked: [], busy: false, job: "", paused: false, dest: "", build: null };
     const OKS = ["downloaded", "exists"], NOOA = ["no_oa", "blocked"];
@@ -1248,6 +1263,19 @@ window.addEventListener("unhandledrejection", (e) => {
       S.busy = on;
       if (opts.onBusy) opts.onBusy(on);
     }
+    // every picked DOI with its result; ones the job never reached count as "pending" once it is over
+    function allRows() {
+      const seen = new Set(), out = [];
+      S.picked.forEach((x) => {
+        const r = S.rows.get(key(x.doi));
+        seen.add(key(x.doi));
+        if (r) out.push(r); else if (!S.busy) out.push({ doi: x.doi, title: x.title || "", status: "pending", note: "还没处理" });
+      });
+      S.rows.forEach((r, k) => { if (!seen.has(k)) out.push(r); });
+      return out;
+    }
+    const unfetched = () => allRows().filter((r) => !OKS.includes(r.status));
+    const viewRows = () => (G("OnlyBad").checked ? unfetched() : allRows());
     function failedList() {
       return S.picked.filter((x) => { const r = S.rows.get(key(x.doi)); return !r || DL_RETRY.includes(r.status); });
     }
@@ -1259,14 +1287,22 @@ window.addEventListener("unhandledrejection", (e) => {
       G("BarFill").style.width = (total ? Math.round(100 * done / total) : 0) + "%";
       G("Prog").textContent = `已处理 ${done} / ${total} · ✓ 成功 ${ok} · 无开放获取/需订阅 ${no} · ✗ 失败 ${bad}`;
       G("Current").textContent = d && d.state === "running" && d.current ? "当前：" + d.current : "";
-      if (rows.length) {
+      if (rows.length || S.picked.length) {
         G("ResultsWrap").hidden = false;
-        G("Results").innerHTML = `<div class="results-scroll"><table class="results-table">
+        const view = viewRows();
+        const miss = unfetched().length;
+        G("ResSum").textContent = `下载明细（未获取 ${miss} / 共 ${S.picked.length || rows.length}）`;
+        G("Export").disabled = !miss;
+        const shown = view.slice(0, 500);
+        G("Results").innerHTML = view.length
+          ? `<div class="results-scroll"><table class="results-table">
           <thead><tr><th>DOI</th><th>状态</th><th>文件 / 说明</th></tr></thead>
-          <tbody>${rows.map((x) => `<tr>
+          <tbody>${shown.map((x) => `<tr>
             <td>${esc(x.doi || "")}</td>
             <td>${esc((DL_STATUS[x.status] || [x.status])[0])}</td>
-            <td class="aux">${esc(x.file || x.note || "")}</td></tr>`).join("")}</tbody></table></div>`;
+            <td class="aux">${esc(x.file || x.note || "")}</td></tr>`).join("")}</tbody></table></div>`
+            + (view.length > shown.length ? `<div class="aux">只显示前 ${shown.length} 条，其余请用「导出未获取清单」</div>` : "")
+          : `<div class="aux">${S.busy ? "暂时没有失败的条目" : "✓ 全部已获取，没有未获取的条目"}</div>`;
       }
       return { ok, no, bad, done, failed: failedList().length };
     }
@@ -1310,8 +1346,8 @@ window.addEventListener("unhandledrejection", (e) => {
           }
         }, (d) => {
           merge(d);
-          const t = render(total, d);
           buttons(false);
+          const t = render(total, d);
           if (d.state === "error") {
             G("Panel").classList.add("bad");
             G("RunTitle").textContent = `✗ 下载中断：${d.error || "未知错误"}。已完成的保留，点重试继续剩下的`;
@@ -1333,6 +1369,55 @@ window.addEventListener("unhandledrejection", (e) => {
         buttons(false);
       }
     }
+
+    G("OnlyBad").addEventListener("change", () => render(S.picked.length, null));
+    G("Export").addEventListener("click", () => {
+      const rows = unfetched();
+      if (!rows.length) return toast("没有未获取的条目");
+      const lines = [["DOI", "标题", "状态", "说明", "链接"].join(",")].concat(rows.map((r) => [
+        r.doi, r.title, (DL_STATUS[r.status] || [r.status])[0], r.note, r.url || doiUrl(r.doi),
+      ].map((v) => `"${String(v || "").replace(/"/g, '""')}"`).join(",")));
+      saveBlob(new Blob(["\ufeff" + lines.join("\n")], { type: "text/csv;charset=utf-8" }), `未获取清单_${stamp()}.csv`);
+      toast(`已导出 ${rows.length} 条未获取记录`);
+    });
+
+    // per-page download settings: own folder and own channels, remembered per page in this browser.
+    // Untouched fields follow the global defaults (top bar / Settings); once changed they are independent.
+    const LS = "doifinder.dlopts." + prefix;
+    let saved = {};
+    try { saved = JSON.parse(localStorage.getItem(LS) || "{}") || {}; } catch { saved = {}; }
+    const gv = {
+      dir: () => ($("dlDir") ? $("dlDir").value.trim() : ""),
+      scihub: () => ($("scihubEnable") ? $("scihubEnable").checked : true),
+      inst: () => ($("instEnable") ? $("instEnable").checked : false),
+      workers: () => String(($("dlWorkers") && $("dlWorkers").value) || 3),
+    };
+    function syncDefaults() {
+      G("Dir").value = saved.dir !== undefined ? saved.dir : "";
+      G("Dir").placeholder = "下载目录（留空 = 默认：" + (gv.dir() || "未设置") + "）";
+      G("Sci").checked = saved.scihub !== undefined ? !!saved.scihub : gv.scihub();
+      G("Inst").checked = saved.inst !== undefined ? !!saved.inst : gv.inst();
+      G("Workers").value = saved.workers !== undefined ? String(saved.workers) : gv.workers();
+    }
+    function remember(k, v) {
+      saved[k] = v;
+      try { localStorage.setItem(LS, JSON.stringify(saved)); } catch { /* private mode */ }
+    }
+    G("Dir").addEventListener("change", () => remember("dir", G("Dir").value.trim()));
+    G("Sci").addEventListener("change", () => remember("scihub", G("Sci").checked));
+    G("Inst").addEventListener("change", () => remember("inst", G("Inst").checked));
+    G("Workers").addEventListener("change", () => remember("workers", Number(G("Workers").value)));
+    G("Pick").addEventListener("click", async () => {
+      try {
+        const d = await api("/api/pick-folder", { initial: G("Dir").value.trim() || gv.dir() });
+        if (d.path) { G("Dir").value = d.path; remember("dir", d.path); toast("本页下载目录：" + d.path); }
+      } catch (e) { toast(e.message); }
+    });
+    G("Open").addEventListener("click", () =>
+      api("/api/open-folder", { path: G("Dir").value.trim() || gv.dir() }).catch((e) => toast(e.message)));
+    const pageDir = () => G("Dir").value.trim() || gv.dir();
+    document.addEventListener("doifinder:settings", syncDefaults);
+    syncDefaults();
 
     G("Retry").addEventListener("click", () => {
       if (S.busy) return;
@@ -1363,6 +1448,16 @@ window.addEventListener("unhandledrejection", (e) => {
     return {
       get busy() { return S.busy; },
       get rows() { return S.rows; },
+      dir: pageDir,
+      /** POST body for /api/download with THIS page's folder and channels */
+      body(dois, extra) {
+        const b = downloadBody(dois, extra);
+        b.dir = pageDir();
+        b.scihub = G("Sci").checked;
+        b.inst = G("Inst").checked;
+        b.workers = Number(G("Workers").value) || 3;
+        return b;
+      },
       /** picked: [{doi, ...}] (duplicates dropped); build(subset) -> POST body for /api/download */
       start(picked, build) {
         if (S.busy) return false;
@@ -1401,7 +1496,7 @@ window.addEventListener("unhandledrejection", (e) => {
 
   const _dlPanels = {};
   /** Download `dois` on the page that asked, with its own panel placed right under `anchor`'s toolbar. */
-  function dlHere(key, anchor, dois, extra) {
+  function ensurePanel(key, anchor) {
     let p = _dlPanels[key];
     if (!p) {
       const slot = document.createElement("div");
@@ -1409,12 +1504,21 @@ window.addEventListener("unhandledrejection", (e) => {
       host.parentNode.insertBefore(slot, host.nextSibling);
       p = _dlPanels[key] = makeDlPanel(key, slot);
     }
+    return p;
+  }
+  function dlHere(key, anchor, dois, extra) {
+    const p = ensurePanel(key, anchor);
     if (p.busy) { toast("这一页正在下载，请先等它结束或点停止"); return p; }
     const list = (dois || []).filter(Boolean);
     if (!list.length) { toast("没有可下载的 DOI"); return p; }
-    p.start(list.map((d) => ({ doi: d })), (subset) => downloadBody(subset.map((x) => x.doi), extra));
+    p.start(list.map((d) => ({ doi: d })), (subset) => p.body(subset.map((x) => x.doi), extra));
     return p;
   }
+
+  // every page gets its own download settings + progress panel up front, so the folder and channels
+  // can be chosen before clicking download
+  [["lk", "toDownload"], ["sr", "searchToDownload"], ["cx", "chemToDownload"], ["jf", "jToDownload"],
+   ["rg", "rgResolve"], ["lb", "labDownload"]].forEach(([k, id]) => { if ($(id)) ensurePanel(k, $(id)); });
 
   function pollJob(jobId, onTick, onDone) {
     state.job = jobId;
@@ -2079,7 +2183,7 @@ window.addEventListener("unhandledrejection", (e) => {
       if (dl.busy) return;
       const dois = [...PP.sel];
       if (!dois.length) return toast("还没有勾选预印本");
-      dl.start(dois.map((d) => ({ doi: d })), (subset) => downloadBody(subset.map((x) => x.doi)));
+      dl.start(dois.map((d) => ({ doi: d })), (subset) => dl.body(subset.map((x) => x.doi)));
     });
 
     // 从「② DOI → PDF」送来没下到的 DOI：切到本页，填好，由用户点查找
@@ -2308,7 +2412,7 @@ window.addEventListener("unhandledrejection", (e) => {
       setFb("");
       const journal = st.journal || (st.rows[0] && st.rows[0].journal) || (G("jdIssn").value || "").trim();
       const meta = new Map(picked.map((x) => [String(x.doi).toLowerCase(), x]));
-      jdDl.start(picked, (subset) => downloadBody(subset.map((x) => x.doi), {
+      jdDl.start(picked, (subset) => jdDl.body(subset.map((x) => x.doi), {
         layout: {
           journal,
           items: subset.map((x) => { const m = meta.get(String(x.doi).toLowerCase()) || x;
@@ -2339,7 +2443,7 @@ window.addEventListener("unhandledrejection", (e) => {
       if (byDoi.length) dlHere("lb", $("labDownload"), byDoi.map((x) => x.doi));
       if (!direct.length) return;
       try {
-        const r = await api("/api/lab/download", { items: direct, dir: $("dlDir") ? $("dlDir").value.trim() : "" });
+        const r = await api("/api/lab/download", { items: direct, dir: _dlPanels.lb ? _dlPanels.lb.dir() : ($("dlDir") ? $("dlDir").value.trim() : "") });
         pollJob(r.job_id, (d) => {
           $("labCount").textContent = `直链下载 ${d.done}/${d.total}`;
         }, (d) => {
