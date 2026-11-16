@@ -20,6 +20,7 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.parse
 import urllib.request
 import uuid
 import webbrowser
@@ -29,6 +30,7 @@ from urllib.parse import unquote, urlparse
 import chem
 import browser
 import downloader
+import journalinfo
 import journals
 import netpolicy
 import platform_util
@@ -82,6 +84,7 @@ def _resolve_data_dir(preferred: str) -> str:
 
 _PREFERRED = (platform_util.data_dir() if FROZEN else RES)
 DATA = _resolve_data_dir(_PREFERRED)
+journalinfo.configure(DATA)
 CACHE_PATH = os.path.join(DATA, ".cache", "lookup_cache.json") if DATA else ""
 SETTINGS_PATH = os.path.join(DATA, "settings.json") if DATA else ""
 LOG_PATH = os.path.join(DATA, "doifinder.log") if DATA else ""
@@ -114,6 +117,7 @@ DEFAULT_SETTINGS = {
     "inst_timeout": 75,
     "elsevier_key": "",
     "openalex_key": "",
+    "core_key": "",
     "elsevier_token": "",
     "wiley_token": "",
     "journal_subs": [],
@@ -229,6 +233,7 @@ def load_settings() -> dict:
         pass
     browser.set_pref(s.get("browser"))
     netpolicy.set_openalex_key(s.get("openalex_key"))
+    netpolicy.set_core_key(s.get("core_key"))
     netpolicy.set_email(s.get("email"))
     # an old built-in mirror list follows the built-in order, not a user choice
     saved = [ln.strip() for ln in str(s.get("scihub_mirrors") or "").splitlines() if ln.strip()]
@@ -249,7 +254,7 @@ def _write_settings(s: dict) -> None:
 
 
 _INT_LIMITS = {"download_workers": (1, 5), "scihub_timeout": (5, 120), "inst_timeout": (5, 300)}
-_SECRET_KEYS = ("elsevier_key", "elsevier_token", "wiley_token", "openalex_key")
+_SECRET_KEYS = ("elsevier_key", "elsevier_token", "wiley_token", "openalex_key", "core_key")
 _MASK = "********"
 
 
@@ -1013,6 +1018,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"journals": chem.journals()})
             except Exception as e:  # noqa: BLE001
                 return self._json({"error": str(e)}, 502)
+        if p == "/api/journalinfo/status":
+            return self._json(journalinfo.status())
+        if p == "/api/journalinfo":
+            q = urllib.parse.parse_qs(qs)
+            try:
+                info = journalinfo.lookup((q.get("issn") or [""])[0], (q.get("name") or [""])[0])
+            except Exception:  # noqa: BLE001
+                info = None
+            return self._json({"info": info, "status": journalinfo.status()})
         if p == "/api/journal/presets":
             return self._json({"presets": journals.PRESETS})
         if p.startswith("/api/journal/search"):
@@ -1277,6 +1291,12 @@ class Handler(BaseHTTPRequestHandler):
                 save_settings(body.get("settings") or {})
                 return self._json({"settings": public_settings()})
             return self._json({"settings": load_settings()})
+
+        if p == "/api/journalinfo/update":
+            try:
+                return self._json({"status": journalinfo.update()})
+            except Exception as e:  # noqa: BLE001
+                return self._json({"error": str(e)}, 502)
 
         if p == "/api/journal/harvest":
             issn = str(body.get("issn") or "").strip()

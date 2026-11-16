@@ -223,6 +223,10 @@ arXiv 预印本没有 DOI 时，程序会用 `10.48550/arXiv.<编号>` 合成。
 
 ---
 
+## 期刊信息（可选）
+
+「⑨ 期刊文库」页可以显示一本期刊的平均 / 中位审稿周期、JCR 分区、中科院分区和影响因子。数据来自公开数据集 [CrushSCI-Journal-Review-Time](https://github.com/wangshunqi2020-commits/CrushSCI-Journal-Review-Time)（CC BY-NC 4.0：仅限非商业使用，需署名）。**本项目不内置这份数据**，点「下载期刊数据」后只保存在你自己的电脑上。审稿天数是收稿到录用的日历天数，只是观察到的样本，不代表保证周期。
+
 ## 下载顺序是怎么定的
 
 不是所有文献都走同一条路。程序按 DOI 前缀判断出版社，再看年份和你开了哪些通道：
@@ -236,7 +240,7 @@ arXiv 预印本没有 DOI 时，程序会用 `10.48550/arXiv.<编号>` 合成。
 | MDPI、PLOS、Frontiers 等全开放出版社 | 直连 → 开放获取 → PMC |
 | 预印本（arXiv、SSRN、ChemRxiv） | 直连 → 开放获取 → 机构浏览器 |
 
-**开放获取那一步**会并行查 OpenAlex、Unpaywall、Europe PMC、Semantic Scholar、PMC、OSTI、Zenodo、HAL、Crossref、DOAJ，15 秒内回来多少用多少；结果按 24 小时缓存，同一批重跑不再重复查询。
+**开放获取那一步**会并行查 OpenAlex、Unpaywall、Europe PMC、Semantic Scholar、PMC、OSTI、Zenodo、HAL、Crossref、DOAJ、CORE（需免费 API key，可选）和 Internet Archive Scholar，15 秒内回来多少用多少；结果按 24 小时缓存，同一批重跑不再重复查询。
 
 **预印本自动换正式版**：遇到 SSRN、Research Square 这类预印本 DOI，程序会用标题回 Crossref 找正式发表版本，找到就改下那一版（正式版常常是开放获取）。
 

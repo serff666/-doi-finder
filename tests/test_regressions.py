@@ -133,3 +133,109 @@ def test_harvest_unknown_journal_reports_clear_error():
         assert errs and "查不到这本期刊" in errs[0]
     finally:
         journals._get = orig
+
+
+def test_core_needs_key_and_exact_doi():
+    import netpolicy
+    import sources
+    calls = []
+    orig = sources.get_json
+
+    def fake(url, mailto="", timeout=15, tries=3, headers=None):
+        calls.append((url, headers))
+        return {"results": [
+            {"doi": "10.1/other", "downloadUrl": "https://x.org/wrong.pdf"},
+            {"doi": "10.1002/wcms.1704", "downloadUrl": "https://core.ac.uk/download/1.pdf",
+             "sourceFulltextUrls": ["https://repo.org/a.pdf", "https://repo.org/a.html"]}]}
+    sources.get_json = fake
+    try:
+        netpolicy.set_core_key("")
+        assert sources.core_candidates("10.1002/wcms.1704") == [] and not calls     # no key: no request
+        netpolicy.set_core_key("k")
+        urls = [c["url"] for c in sources.core_candidates("10.1002/wcms.1704")]
+        assert urls == ["https://core.ac.uk/download/1.pdf", "https://repo.org/a.pdf"]
+        assert calls[0][1]["Authorization"] == "Bearer k"
+    finally:
+        sources.get_json = orig
+        netpolicy.set_core_key("")
+
+
+def test_internet_archive_prefers_webarchive_pdfs():
+    import sources
+    orig = sources.get_json
+    sources.get_json = lambda url, **k: {"files": [
+        {"mimetype": "text/html", "urls": [{"rel": "webarchive", "url": "https://web.archive.org/web/1/h.html"}]},
+        {"mimetype": "application/pdf", "urls": [
+            {"rel": "repository", "url": "https://repo.org/p.pdf"},
+            {"rel": "publisher", "url": "https://pub.org/p.pdf"},
+            {"rel": "webarchive", "url": "https://web.archive.org/web/2/https://repo.org/p.pdf"}]}]}
+    try:
+        got = [c["url"] for c in sources.internet_archive_candidates("10.1/x")]
+        assert got == ["https://web.archive.org/web/2/https://repo.org/p.pdf", "https://repo.org/p.pdf"]
+    finally:
+        sources.get_json = orig
+
+
+def test_core_key_is_masked_in_public_settings():
+    import server
+    server.save_settings({"core_key": "abc123"})
+    assert server.public_settings()["core_key"] == "********"
+    server.save_settings({"core_key": ""})
+
+
+def _journal_csv(header, rows):
+    return header + "\n" + "\n".join(rows) + "\n"
+
+
+def test_journalinfo_parses_english_and_chinese_headers():
+    import journalinfo
+    journalinfo.configure(tempfile.mkdtemp())
+    en = _journal_csv("id,name,issn,eissn,publisher,index,cas_zone_2025,jcr_quartile_2025,impact_factor_2024,"
+                      "review_sample_count,review_avg_days,review_median_days,review_min_days,review_max_days,updated",
+                      ["1,Test J,1759-0876,1759-0884,Wiley,SCIE,2区,Q1,16.1,8,112.5,98,40,200,2026-11-14"])
+    zh = _journal_csv("编号,期刊名称,ISSN,eISSN,出版社,收录,中科院分区,JCR分区,影响因子,样本数,平均审稿天数,中位审稿天数,最短天数,最长天数,更新日期",
+                      ["1,测试刊,0001-0002,,某社,SSCI,3区,Q2,2.5,5,60,55,20,90,2026-11-14"])
+    for text, issn, avg in ((en, "1759-0884", 112.5), (zh, "0001-0002", 60.0)):
+        with open(journalinfo.path(), "w", encoding="utf-8") as fh:
+            fh.write(text)
+        journalinfo._CACHE["mtime"] = 0.0
+        rec = journalinfo.lookup(issn)
+        assert rec and rec["avg_days"] == avg and rec["quartile"] in ("Q1", "Q2")
+    assert journalinfo.lookup("9999-9999") is None
+
+
+def test_journalinfo_update_rejects_incomplete_or_unrecognised_data():
+    import io
+    import journalinfo
+    journalinfo.configure(tempfile.mkdtemp())
+
+    class R(io.BytesIO):
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    bad = lambda req, timeout=0: R(b"foo,bar\n1,2\n")                                   # noqa: E731
+    try:
+        journalinfo.update(opener=bad)
+        raise AssertionError("expected failure")
+    except RuntimeError as e:
+        assert "下载失败" in str(e)
+    assert not os.path.exists(journalinfo.path())            # a bad download never replaces anything
+    rows = [f"{i},J{i},{1000 + i:04d}-{i:04d},,P,SCIE,2区,Q1,1.0,3,50,45,20,80,2026-11-14" for i in range(150)]
+    good = _journal_csv("id,name,issn,eissn,publisher,index,cas_zone,jcr_quartile,impact_factor,sample_count,avg_days,median_days,min_days,max_days,updated", rows)
+    st = journalinfo.update(opener=lambda req, timeout=0: R(good.encode()))
+    assert st["loaded"] and st["count"] >= 100
+
+
+def test_journalinfo_endpoints_and_page_elements():
+    import server
+    httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+    port = httpd.server_address[1]
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/journalinfo?issn=0000-0000", timeout=5) as r:
+            d = json.loads(r.read())
+        assert d["info"] is None and "attribution" in d["status"]
+    finally:
+        httpd.shutdown()
+    html = open(os.path.join(ROOT, "web", "index.html"), encoding="utf-8").read()
+    assert 'id="jdInfo"' in html and 'id="coreKey"' in html

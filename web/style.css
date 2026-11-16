@@ -316,3 +316,7 @@ tr.editing > td { background: #eef3ff; }
   /* 按钮挨在一起时容易被看成同一个控件，统一拉开一点 */
   .filters > .btn { margin-left: 2px; }
   #jdBar, #tab-journaldl .filters { gap: 12px; }
+
+/* numbered explanation lists inside side panels */
+.rule .steps { margin: 6px 0 0 18px; padding: 0; line-height: 1.65; }
+.rule .steps li { margin-bottom: 4px; }

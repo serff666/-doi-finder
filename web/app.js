@@ -1004,6 +1004,7 @@ window.addEventListener("unhandledrejection", (e) => {
       if ($("elsevierToken")) $("elsevierToken").value = s.elsevier_token || "";
       if ($("wileyToken")) $("wileyToken").value = s.wiley_token || "";
       if ($("openalexKey")) $("openalexKey").value = s.openalex_key || "";
+      if ($("coreKey")) $("coreKey").value = s.core_key || "";
       if ($("rgBrowser")) $("rgBrowser").value = (s.browser || "auto");
       state.myOrcid = s.my_orcid || "";
       $("arFileTpl").value = s.archive_file_template || "{first_author}_{year}_{title}";
@@ -1030,7 +1031,8 @@ window.addEventListener("unhandledrejection", (e) => {
                     elsevier_key: $("elsevierKey") ? $("elsevierKey").value.trim() : "",
                     elsevier_token: $("elsevierToken") ? $("elsevierToken").value.trim() : "",
                     wiley_token: $("wileyToken") ? $("wileyToken").value.trim() : "",
-                    openalex_key: $("openalexKey") ? $("openalexKey").value.trim() : "" },
+                    openalex_key: $("openalexKey") ? $("openalexKey").value.trim() : "",
+                    core_key: $("coreKey") ? $("coreKey").value.trim() : "" },
       });
       toast("设置已保存");
     } catch (e) { toast("保存失败：" + e.message); }
@@ -1684,6 +1686,45 @@ window.addEventListener("unhandledrejection", (e) => {
       });
     }
 
+    // ---- journal facts (review time / quartile / zone): optional, downloaded on demand
+    const infoBox = document.getElementById("jdInfo");
+    const fmt = (v, unit = "") => (v === null || v === undefined || v === "" ? "—" : v + unit);
+    function drawInfo(info, status, title) {
+      if (!infoBox) return;
+      const btn = `<button class="mini-btn" id="jdInfoUpdate" type="button">${status && status.loaded ? "更新期刊数据" : "下载期刊数据"}</button>`;
+      const credit = `<div class="aux" style="margin-top:6px">${esc((status && status.attribution) || "")}
+        <a href="${esc((status && status.homepage) || "#")}" target="_blank" rel="noopener noreferrer">数据来源</a></div>`;
+      if (!status || !status.loaded) {
+        infoBox.innerHTML = `<strong>期刊信息（审稿周期 / 分区 / 影响因子）</strong>：还没有数据。点右边按钮从 GitHub 下载约 3 MB，只保存在你的电脑上。 ${btn}${credit}`;
+      } else if (!info) {
+        infoBox.innerHTML = `<strong>${esc(title || "这本期刊")}</strong>：期刊数据里没有收录这本刊（共 ${esc(status.count)} 本，下载于 ${esc(status.downloaded)}）。 ${btn}`;
+      } else {
+        const rev = info.avg_days === null ? "审稿周期：暂无可核实的数据"
+          : `审稿周期：平均 <b>${fmt(Math.round(info.avg_days))}</b> 天 · 中位 ${fmt(Math.round(info.median_days))} 天 · 最短 ${fmt(Math.round(info.min_days))} / 最长 ${fmt(Math.round(info.max_days))}（样本 ${fmt(info.samples)} 篇）`;
+        infoBox.innerHTML = `<strong>${esc(info.name || title || "")}</strong> · ${esc(info.publisher || "")}
+          <div style="margin-top:4px">${rev}</div>
+          <div class="aux" style="margin-top:2px">JCR ${esc(info.quartile || "—")} · 中科院 ${esc(info.cas || "—")} · 影响因子 ${fmt(info.jif)} · ${esc(info.index || "")} · 数据更新 ${esc(info.updated || status.downloaded || "")} ${btn}</div>${credit}`;
+      }
+      const b = document.getElementById("jdInfoUpdate");
+      if (b) b.addEventListener("click", async () => {
+        b.disabled = true; b.textContent = "下载中…";
+        try {
+          await api("/api/journalinfo/update", {});
+          const issn = (st.issn || "");
+          const d = await api("/api/journalinfo?issn=" + encodeURIComponent(issn) + "&name=" + encodeURIComponent(title || ""));
+          drawInfo(d.info, d.status, title);
+          toast("期刊数据已更新");
+        } catch (e) { b.disabled = false; b.textContent = "重试"; toast("下载失败：" + e.message); }
+      });
+    }
+    async function showInfo(issn, title) {
+      try {
+        const d = await api("/api/journalinfo?issn=" + encodeURIComponent(issn) + "&name=" + encodeURIComponent(title || ""));
+        drawInfo(d.info, d.status, title);
+      } catch (e) { /* info is optional */ }
+    }
+    api("/api/journalinfo/status").then((s) => drawInfo(null, s, "")).catch(() => {});
+
     const KIND_ZH = { review: "综述", research: "研究", "non-research": "其他" };
     function kindMatches(r) {
       const sel = (document.getElementById("jdKind") || {}).value || "all";
@@ -1739,7 +1780,9 @@ window.addEventListener("unhandledrejection", (e) => {
         return;
       }
       const issn = hit.issn;
+      st.issn = issn;
       st.journal = hit.title || "";
+      showInfo(issn, st.journal);
       const from = Number(document.getElementById("jdFrom").value || 0);
       const to = Number(document.getElementById("jdTo").value || 0);
       run.disabled = true;
