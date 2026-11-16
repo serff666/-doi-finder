@@ -64,3 +64,9 @@ def test_server_pickers_have_no_tk_left():
     import re
     src = open("server.py", encoding="utf-8").read()
     assert not re.search(r"import tkinter|filedialog", src)
+
+
+def test_windows_script_brings_dialog_to_front():
+    src = pu._PS_PICK
+    assert "SetForegroundWindow" in src and "TopMost = $true" in src and "keybd_event" in src
+    assert src.count("@'") == src.count("'@") == 1

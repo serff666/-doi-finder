@@ -9,6 +9,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.path.join(ROOT, "web")
 
+PIN_ZH = "<script>try { localStorage.setItem(\"df_lang\", \"zh\"); } catch (e) {}</script>"  # the Chinese checks must not depend on the browser locale
+
 FAKE = r"""
 <script>
 window.__log = [];
@@ -275,7 +277,7 @@ DRIVER = r"""
     $("missingToPreprint").click();
     ok("preprint input filled with the failed DOI", /10\.1000\/c/.test($("ppInput").value) || /10\.1000\/b/.test($("ppInput").value), $("ppInput").value);
     ok("lands on preprint page without searching", !document.getElementById("tab-preprint").hidden && window.__log.filter((c) => c[0] === "/api/preprint/find").length === 2);
-  } catch (e) { out.err = String(e && e.message || e) + " | dlStatus=" + $("dlStatus").textContent + " | dlFeedback=" + $("dlFeedback").textContent + " | log=" + JSON.stringify(window.__log.slice(-4)); }
+  } catch (e) { out.err = String(e && e.message || e) + " | lang=" + document.documentElement.lang + " | runStatus=" + $("runStatus").textContent + " | dlStatus=" + $("dlStatus").textContent + " | dlFeedback=" + $("dlFeedback").textContent + " | log=" + JSON.stringify(window.__log.slice(-4)); }
   const pre = document.createElement("pre"); pre.id = "result"; pre.textContent = JSON.stringify(out);
   document.body.appendChild(pre);
 })();
@@ -291,7 +293,7 @@ class H(BaseHTTPRequestHandler):
         p = self.path.split("?")[0]
         if p in ("/", "/index.html"):
             html = open(os.path.join(WEB, "index.html"), encoding="utf-8").read()
-            html = html.replace("<script", FAKE + "<script", 1) if "<script" in html else FAKE + html
+            html = html.replace("<script", PIN_ZH + FAKE + "<script", 1) if "<script" in html else FAKE + html
             html = html.replace("</body>", DRIVER + "</body>")
             body, ctype = html.encode("utf-8"), "text/html; charset=utf-8"
         else:

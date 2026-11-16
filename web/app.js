@@ -25,6 +25,10 @@ window.addEventListener("unhandledrejection", (e) => {
 
 
   const $ = (id) => document.getElementById(id);
+  // 程序自己拼出来的文字（路径预览、占位符、弹窗）不在页面 DOM 里，用 tr(中文) 取当前语言的文字。
+  // 中文原文就是词表的键，英文只写在 i18n.en.js；切换语言时由 "doifinder:lang" 事件重算。
+  const tr = (zh) => (window.DF_I18N ? window.DF_I18N.t(zh) : zh);
+  const locale = () => (window.DF_I18N && window.DF_I18N.lang() === "en" ? "en-GB" : "zh-CN");
   const DEMO = new URLSearchParams(location.search).get("demo") === "1";
 
   /* ------------------------------------------------------------------ helpers */
@@ -643,7 +647,7 @@ window.addEventListener("unhandledrejection", (e) => {
     state.dlBusy = true;
     $("retryDownload").hidden = true;
     $("startDownload").disabled = true; $("stopDownload").disabled = false;
-    $("pauseDownload").disabled = false; $("pauseDownload").textContent = "暂停";
+    $("pauseDownload").disabled = false; $("pauseDownload").textContent = "暂停"; state.dlPaused = false;
     $("dlStatus").textContent = "正在解析开放获取来源…";
     $("dot").className = "green-dot busy";
     // 先把待办行铺出来，别让表格空着：后端要过几秒才吐第一行结果
@@ -657,7 +661,7 @@ window.addEventListener("unhandledrejection", (e) => {
     const downloadIdle = () => {
       state.dlBusy = false;
       $("startDownload").disabled = false; $("stopDownload").disabled = true;
-      $("pauseDownload").disabled = true; $("pauseDownload").textContent = "暂停";
+      $("pauseDownload").disabled = true; $("pauseDownload").textContent = "暂停"; state.dlPaused = false;
       $("dot").className = "green-dot";
     };
     // 后端结果覆盖对应行，没轮到的保持“等待中”
@@ -671,7 +675,7 @@ window.addEventListener("unhandledrejection", (e) => {
       const job = await api("/api/download", {
         layout,
         dois, workspace: $("dlDir").value.trim(),
-        collection: ($("dlCollection").value.trim() || "未分类"), structure: $("dlStruct").value || "flat",
+        collection: ($("dlCollection").value.trim() || tr("未分类")), structure: $("dlStruct").value || "flat",
         email: $("email").value.trim(),
         template: $("dlTemplate").value.trim(), force: $("forceRedownload").checked,
         workers: Number($("dlWorkers").value),
@@ -799,7 +803,7 @@ window.addEventListener("unhandledrejection", (e) => {
       if (meta.template) $("dlTemplate").value = meta.template;
       renderDownloads();
       const when = meta.at
-        ? new Date(meta.at * 1000).toLocaleString("zh-CN", { hour12: false }) : "";
+        ? new Date(meta.at * 1000).toLocaleString(locale(), { hour12: false }) : "";
       $("dlStatus").textContent =
         `已导入${looksJson ? "任务" : " CSV"}${when ? "（" + when + "）" : ""} · ${rows.length} 条` +
         (meta.summary ? ` · ${meta.summary}` : "") + "　未获取的可以继续点「归档」";
@@ -812,9 +816,10 @@ window.addEventListener("unhandledrejection", (e) => {
   $("pauseDownload").addEventListener("click", async () => {
     if (!state.job) return;
     const btn = $("pauseDownload");
-    const paused = btn.textContent === "继续";
+    const paused = !!state.dlPaused;       // 不从按钮文字判断：界面语言一换，文字就不一样了
     try {
       await api(`/api/${paused ? "resume" : "pause"}/${state.job}`, {});
+      state.dlPaused = !paused;
       btn.textContent = paused ? "暂停" : "继续";
       $("dlStatus").textContent = paused ? "已继续" : "暂停中…（当前这一步结束后停住，点「继续」恢复）";
     } catch (e) {
@@ -861,7 +866,7 @@ window.addEventListener("unhandledrejection", (e) => {
   $("openBlocked").addEventListener("click", async () => {
     const rows = state.downloadRows.filter((r) => !["downloaded", "exists"].includes(r.status));
     if (!rows.length) return toast("没有待处理的条目");
-    if (rows.length > 12 && !confirm(`将打开 ${rows.length} 个标签页，继续？`)) return;
+    if (rows.length > 12 && !confirm(tr(`将打开 ${rows.length} 个标签页，继续？`))) return;
     for (const r of rows.slice(0, 12)) {
       try { await api("/api/open-url", { url: r.url || doiUrl(r.doi) }); } catch { /* ignore */ }
       await new Promise((res) => setTimeout(res, 400));
@@ -1426,21 +1431,23 @@ window.addEventListener("unhandledrejection", (e) => {
     const safeSeg = (x) => String(x || "").replace(/[<>:"/\\|?*\x00-\x1f]+/g, " ").replace(/\s+/g, " ").trim().replace(/^[. ]+|[. ]+$/g, "");
     function target() {
       const c = ctx();
-      const coll = safeSeg(G("Coll").value) || safeSeg(c.name) || "未分类";
+      const coll = safeSeg(G("Coll").value) || safeSeg(c.name) || tr("未分类");
       return { workspace: G("Dir").value.trim() || gv.dir(), collection: coll,
                structure: G("Struct").value || c.structure || "flat", auto: !G("Struct").value };
     }
     function refreshWhere() {
       const c = ctx(), t = target();
-      G("Coll").placeholder = "自动：" + (safeSeg(c.name) || "未分类");
-      G("Struct").options[0].textContent = "自动（" + (STRUCT_LABEL[c.structure || "flat"]) + "）";
+      G("Coll").placeholder = tr("自动：") + (safeSeg(c.name) || tr("未分类"));
+      G("Struct").options[0].textContent = tr(`自动（${STRUCT_LABEL[c.structure || "flat"]}）`);
       const sep = t.workspace.includes("\\") ? "\\" : "/";
       const ex = { flat: [], year: ["2025"], journal: ["期刊名"], journal_year: ["期刊名", "2025"], volume_issue: ["2025", "Volume 1, Issue 2"] }[t.structure] || [];
-      G("Where").textContent = "将保存到：" + [t.workspace || "（还没设工作区）", t.collection, ...ex, "文件.pdf"].join(sep);
+      G("Where").textContent = tr("将保存到：")
+        + [t.workspace || tr("（还没设工作区）"), t.collection, ...ex.map(tr), tr("文件.pdf")].join(sep);
     }
+    const dirHint = () => { G("Dir").placeholder = tr(`工作区（留空 = 默认：${gv.dir() || "未设置"}）`); };
     function syncDefaults() {
       G("Dir").value = saved.dir !== undefined ? saved.dir : "";
-      G("Dir").placeholder = "工作区（留空 = 默认：" + (gv.dir() || "未设置") + "）";
+      dirHint();
       G("Struct").value = saved.struct || "";
       refreshWhere();
       G("Sci").checked = saved.scihub !== undefined ? !!saved.scihub : gv.scihub();
@@ -1462,13 +1469,15 @@ window.addEventListener("unhandledrejection", (e) => {
     G("Pick").addEventListener("click", async () => {
       try {
         const d = await api("/api/pick-folder", { initial: G("Dir").value.trim() || gv.dir() });
-        if (d.path) { G("Dir").value = d.path; remember("dir", d.path); toast("本页下载目录：" + d.path); }
+        if (d.path) { G("Dir").value = d.path; remember("dir", d.path); toast(tr("本页下载目录：") + d.path); }
       } catch (e) { toast(e.message); }
     });
     G("Open").addEventListener("click", () =>
       api("/api/open-folder", { path: S.dest || target().workspace }).catch((e) => toast(e.message)));
     const pageDir = () => target().workspace;
     document.addEventListener("doifinder:settings", syncDefaults);
+    // 切换界面语言：只重算文字，不动用户已经填的值
+    document.addEventListener("doifinder:lang", () => { dirHint(); refreshWhere(); });
     syncDefaults();
 
     G("Retry").addEventListener("click", () => {
@@ -1557,17 +1566,17 @@ window.addEventListener("unhandledrejection", (e) => {
   const rgName = (u) => { const m = String(u).match(/researchgate\.net\/profile\/([^/?#]+)/i);
     return m ? m[1].replace(/[-_]+/g, " ").replace(/\s+\d+$/, "").trim() : ""; };
   const DL_CTX = {
-    lk: () => ({ name: "未分类", structure: "flat" }),
+    lk: () => ({ name: tr("未分类"), structure: "flat" }),
     sr: () => { const a = $("qAuthor").value.trim(), o = $("qOrcid").value.trim(), q = $("q").value.trim();
       if (a) return { name: a, structure: "year" };
       if (o) return { name: "ORCID " + o, structure: "year" };
-      return { name: q ? q.slice(0, 50) : "主题检索", structure: "flat" }; },
+      return { name: q ? q.slice(0, 50) : tr("主题检索"), structure: "flat" }; },
     cx: () => ({ name: "ChemASAP", structure: "journal" }),
     jf: () => { const t = ($("jTitle").textContent || "").trim();
-      return { name: t && !/^选择/.test(t) ? t : "期刊追新", structure: "year" }; },
+      return { name: state.journalCurrent && t ? t : tr("期刊追新"), structure: "year" }; },
     rg: () => ({ name: rgName($("rgUrl").value) || "ResearchGate", structure: "year" }),
-    lb: () => ({ name: hostOf($("labUrl").value) || "课题组网页", structure: "year" }),
-    pp: () => ({ name: "预印本", structure: "flat" }),
+    lb: () => ({ name: hostOf($("labUrl").value) || tr("课题组网页"), structure: "year" }),
+    pp: () => ({ name: tr("预印本"), structure: "flat" }),
   };
   /** Download `dois` on the page that asked, with its own panel placed right under `anchor`'s toolbar. */
   function ensurePanel(key, anchor) {
@@ -1618,7 +1627,7 @@ window.addEventListener("unhandledrejection", (e) => {
 
   async function restoreLast() {
     const fmt = (ts) => {
-      try { return new Date(ts * 1000).toLocaleString("zh-CN", { hour12: false }); }
+      try { return new Date(ts * 1000).toLocaleString(locale(), { hour12: false }); }
       catch { return ""; }
     };
     try {
@@ -2286,7 +2295,7 @@ window.addEventListener("unhandledrejection", (e) => {
     };
     const jdDl = makeDlPanel("jd", document.getElementById("jdSlot"), {
       onBusy: (on) => { document.getElementById("jdDownload").disabled = on; },
-      context: () => ({ name: st.journal || (st.rows[0] && st.rows[0].journal) || (G("jdIssn").value || "").trim() || "期刊文库",
+      context: () => ({ name: st.journal || (st.rows[0] && st.rows[0].journal) || (G("jdIssn").value || "").trim() || tr("期刊文库"),
                         structure: "volume_issue" }),
     });
 
@@ -2519,7 +2528,7 @@ window.addEventListener("unhandledrejection", (e) => {
       if (byDoi.length) dlHere("lb", $("labDownload"), byDoi.map((x) => x.doi));
       if (!direct.length) return;
       try {
-        const lbT = _dlPanels.lb ? _dlPanels.lb.target() : { workspace: $("dlDir").value.trim(), collection: "课题组网页", structure: "year" };
+        const lbT = _dlPanels.lb ? _dlPanels.lb.target() : { workspace: $("dlDir").value.trim(), collection: tr("课题组网页"), structure: "year" };
         const r = await api("/api/lab/download", { items: direct, workspace: lbT.workspace, collection: lbT.collection, structure: lbT.structure });
         pollJob(r.job_id, (d) => {
           $("labCount").textContent = `直链下载 ${d.done}/${d.total}`;
