@@ -1,0 +1,10 @@
+DOI Finder - third-party credits
+
+Parts of this project were derived from or inspired by the following works.
+Please verify each upstream license before redistributing.
+
+- Crossref SBMV (field-validation approach) - MIT
+- PaperSearch (basis of papersearch.py)
+- scansci-pdf, zotero-scihub (mirror/PoW handling ideas)
+
+This project is released for academic research and learning, not for commercial use of third-party content.

@@ -1,0 +1,27 @@
+{
+  "_comment": "复制为 settings.json 后填写。所有字段都可留空，留空即关闭对应功能。",
+  "download_dir": "",
+  "email": "",
+  "template": "{first_author}_{year}_{title}",
+
+  "download_workers": 3,
+  "force_redownload": false,
+
+  "scihub_enable": true,
+  "scihub_mirrors": "",
+  "scinet": "",
+  "scihub_timeout": 30,
+
+  "inst_enable": false,
+  "inst_login_url": "",
+  "inst_timeout": 75,
+  "inst_first": false,
+
+  "elsevier_key": "",
+  "elsevier_token": "",
+  "wiley_token": "",
+
+  "journal_subs": [],
+  "browser": "auto",
+  "my_orcid": ""
+}

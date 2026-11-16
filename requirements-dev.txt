@@ -1,0 +1,4 @@
+-r requirements.txt
+pyinstaller>=6.0   # optional: build the Windows exe
+ruff>=0.5          # lint
+pytest>=8.0

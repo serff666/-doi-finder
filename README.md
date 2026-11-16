@@ -1,28 +1,305 @@
 # DOI Finder
 
-A local Windows desktop tool for working with bibliographic identifiers.
+批量把文献标题解析成 DOI，再把 DOI 批量下载成本地 PDF；带期刊追新、课题组主页抓取、参考文献导出。
+Windows 桌面应用（也可在 Linux 上从源码运行，见 [README.linux.md](README.linux.md)），本地运行，界面在浏览器里（`http://127.0.0.1:8765/`）。
 
-## What it does
+> English: see [README.en.md](README.en.md).
 
-- Resolves article titles and reference strings to DOIs, using Crossref and
-  OpenAlex metadata search plus field-level validation.
-- Downloads open-access PDFs, and PDFs from publisher APIs the user is
-  personally entitled to (e.g. the Elsevier Article Retrieval API).
-- Batch imports, exports results to XLSX / CSV / Markdown.
+> **声明 / Disclaimer**
+> 本项目仅用于**学术研究与学习交流**，**不用于任何商业盈利**，作者不提供、不出售任何文献内容。
+> 程序可以连接第三方来源（含 Sci-Hub 镜像），是否合法取决于你所在的国家/地区和你所在机构的规定；
+> **是否使用、如何使用，由使用者自行判断并自行承担全部责任**（Sci-Hub 兜底可在设置里关闭）。
+> 请遵守各出版商的服务条款与著作权法，下载的文献仅限个人研究使用，请勿再分发。
+> This project is for academic research and learning only and is **not** used for commercial profit.
+> Use of third-party sources (including Sci-Hub mirrors) is at your own risk and responsibility.
 
-## What it does not do
+---
 
-- It does not bypass CAPTCHA, bot protection, or paywalls. Sites that gate
-  access with a human-verification challenge are reported as such, not evaded.
-- It does not ship, bundle, or share API credentials. Each user supplies their
-  own key, stored only on their machine.
-- It does not redistribute publisher content.
+## 目录
 
-## Requirements
+1. [它能做什么](#它能做什么)
+2. [安装与启动](#安装与启动)
+3. [第一次启动要填什么](#第一次启动要填什么)
+4. [页面说明](#页面说明)
+5. [下载顺序是怎么定的](#下载顺序是怎么定的)
+6. [常见问题](#常见问题)
+7. [密钥与隐私](#密钥与隐私)
+8. [目录结构](#目录结构)
+9. [许可证](#许可证)
 
-Windows, Python 3.10+ (or the packaged build). No external services are
-required; publisher API access is optional and user-provided.
+---
 
-## Status
+## 它能做什么
 
-Personal research tooling. Not a commercial product.
+| 页面 | 输入 | 输出 |
+|---|---|---|
+| ① 标题 → DOI | 一串标题或整条参考文献 | 每条对应的 DOI，可导出表格 |
+| ② DOI → PDF | 一串 DOI | 本地 PDF 文件，命名规范，可断点 |
+| ③ 主题搜索 | 关键词、作者、ORCID、年份 | 相关文献列表，勾选后加入下载 |
+| ④ ChemASAP | 无 | 有机化学方向的最新 ASAP 文章 |
+| ⑤ 期刊追新 | 期刊名或 ISSN | 该刊最近发表，标出未读 |
+| ⑥ ResearchGate | 作者主页链接 | 该作者的论文清单（需已登录） |
+| ⑦ 归档 | 本地 PDF 文件 | 按规范重命名并入库 |
+| ⑧ 网页文献 | 课题组 publications 页地址 | 页面上所有论文的标题、DOI、PDF |
+
+核心流程是三段：**标题 → DOI → PDF**。每一段的中间数据都留在同一张表里，不用二次录入。
+
+---
+
+## 安装与启动
+
+**已安装版**：桌面 `DOI Finder` 快捷方式，或 `%LOCALAPPDATA%\Programs\DOI Finder\DOI Finder.exe`。
+程序启动后在浏览器里打开 `http://127.0.0.1:8765/`，右上角「退出」关闭服务。
+
+> 应用无数字签名，Windows 可能提示「仍要运行」。
+
+**源码运行**：
+
+```bat
+cd doi-finder
+python server.py            :: 启动服务并打开浏览器
+python server.py --port 9000
+```
+
+依赖：Python 3.11+。导出 Excel 需要 `openpyxl`；从 PDF 取文字需要 `pypdf`。
+浏览器通道需要本机装有 Chrome 或 Edge。
+
+---
+
+## 第一次启动要填什么
+
+顶部有三个字段，**前两个建议第一件事就填**：
+
+| 字段 | 填什么 | 为什么 |
+|---|---|---|
+| **下载目录** | 任意文件夹，例如 `D:\Papers` | 所有 PDF 存这里。不填会用默认目录 |
+| **联系邮箱** | 你自己的邮箱 | 发给 Crossref / Unpaywall / OpenAlex 的请求会带这个地址，进入它们的「礼貌池」，配额更高。**不填也能用，但更容易被限流（429）** |
+| 模板 | 默认 `{first_author}_{year}_{title}` | 文件名格式，可用 `{journal}` `{doi}` |
+
+填完点「保存」。其余设置都能后改。
+
+**不需要账号，不需要注册。** 少数字段（机构通道、出版社 API）是可选的，见各自页面说明。
+
+---
+
+## 页面说明
+
+### ① 标题 → DOI
+
+**用途**：手上只有标题列表（或整条参考文献）时，找出每条的 DOI。
+
+**怎么填**：
+
+- 一行一条，序号可带可不带：`1.` `2)` `(3)` `[4]` `#5` 都会被剥掉
+- 整条参考文献也行：`Spies JA, et al. Chem Soc Rev. 2019;48:1865-1873.`
+- 也接受 BibTeX 与 RIS（从 Zotero / EndNote 导出的记录整段粘贴即可）
+- 行尾带 `doi: 10.xxxx/...` 的，会直接采用那个 DOI，不再查询
+
+**两个开关**：
+
+- **Crossref 不足时用 OpenAlex 兜底**：Crossref 查不到再问 OpenAlex。关掉更快，但漏检更多
+- **相同标题只查询一次**：重复标题自动合并
+
+**结果状态**：
+
+| 状态 | 含义 | 建议 |
+|---|---|---|
+| 高可信 | 标题高度一致，且证据互相印证 | 直接用 |
+| 可能匹配 | 标题像，但证据不足 | 扫一眼 DOI 链接 |
+| 需核对 | 匹配上了，但字段对不上 | 点「修改」手动确认 |
+| 未找到 | 没有可用候选 | 点「修改」手填，或去 ③ 主题搜索 |
+
+**每行可以做的**：点 DOI 打开原文；点「修改」可手填 DOI 或从候选里挑；导出 Excel / Markdown / HTML / CSV / DOI 清单 / 参考文献。
+
+**参考文献导出**：右上角选格式，支持 **GB/T 7714、ACS、APA** 三种。作者、卷、期、页码取自 Crossref 元数据，缺的字段留空，不猜。
+
+**中文文献**：知网/万方收录的论文在 Crossref 里常常没有 DOI。把百度学术的论文链接（`xueshu.baidu.com/...paperid=...`）粘进右侧「百度学术链接 → DOI」，程序会取回标题、DOI、期刊、卷期页。
+
+---
+
+### ② DOI → PDF
+
+**用途**：把 DOI 批量下成本地 PDF。
+
+**怎么填**：一行一个 DOI，`https://doi.org/10.xxxx/...` 也认；可从 ① ③ ④ ⑤ 带入，或导入 TXT / CSV。
+
+**右侧设置逐项说明**：
+
+| 设置 | 说明 |
+|---|---|
+| 下载目录 | 存哪儿。同名文件自动加序号，除非勾「重新下载」 |
+| 并发 | 同时下几篇，默认 3，最快 5。开太多会被出版社限流 |
+| 使用 Sci-Hub / Sci-Net 兜底 | **默认开启并优先尝试**，可在下载页关闭；请自行判断所在地区的合法性 |
+| 机构浏览器兜底 | 用本机浏览器 + 你的校园网会话取 PDF。见下方「机构通道」 |
+| Elsevier API key | dev.elsevier.com 免费申请。填了才能用 Elsevier 官方接口 |
+| Elsevier insttoken | 订阅全文需要，向图书馆索取；开放获取文章不需要 |
+| Wiley TDM token | 授权后免费，用于 Wiley 官方接口 |
+
+**结果状态**：已下载 / 已存在 / 无开放获取 / 需订阅（验证码）/ 失败，每条都注明实际来源（OpenAlex、Europe PMC、Sci-Hub、机构通道…）。
+
+**按钮**：浏览器打开（在浏览器里手动看）、机构登录（打开出版社页登录一次）、归档（本地已有 PDF 时手动入库）、重新归档、删除（只从列表移除，不删文件）。勾「只看未获取」可筛出没下到的。
+
+**断点与去重**：同目录 `.doi-index.json` 记录已下载的 DOI，重跑自动跳过。勾「重新下载」强制覆盖。
+
+**机构通道**：勾上「机构浏览器兜底」后，程序用本机 Chrome/Edge 打开出版社页面取 PDF。
+第一次用需要点某行的「机构登录」，在弹出的窗口里登录一次（学校账号、CARSI、双因子都行），会话存在 `%LOCALAPPDATA%\DOIFinder\browser-profile*`，之后复用。
+登录过期就再点一次「机构登录」。
+
+---
+
+### ③ 主题搜索
+
+**怎么填**：主题关键词必填；作者、ORCID、起止年份可选；勾「仅开放获取」只看 OA。
+
+**用法**：搜索 → 结果表勾选 →「选中项加入下载」跳到 ②。
+点标题可看摘要。结果里的「来源」会告诉你数据从 Crossref 还是 OpenAlex 来。
+
+---
+
+### ④ ChemASAP
+
+**用途**：拉取有机化学方向的最新 ASAP（提前在线发表）文章。
+
+没有输入，点「刷新」即可。勾选后加入下载。数据来自公开的 ChemASAP 接口，只覆盖部分期刊。
+
+---
+
+### ⑤ 期刊追新
+
+**用途**：盯几本刊，看最新文章，标出哪些没读过。
+
+**怎么填**：输入期刊名或 ISSN（如 `0021-9606` 或 `Journal of Chemical Physics`）→「查找」；或点「载入常用期刊」一次加一批。
+
+**结果表**：「新」标记表示上次刷新之后新出现的。勾「只看未读」只看这些；「标记已读」把当前进度存下来。
+勾选后「选中项加入下载」。
+
+**说明**：数据来自 Crossref 的期刊目录，不经过出版社网页，所以没有验证码。
+
+---
+
+### ⑥ ResearchGate
+
+**用途**：抓某个作者在 ResearchGate 上的论文清单。很多文献在那里是作者自己上传的全文。
+
+**怎么填**：作者主页链接，例如 `https://www.researchgate.net/profile/Some-Name`。
+
+**必须先用「打开并登录」**：ResearchGate 有 Cloudflare 人机验证，得在弹出的窗口里过一次。
+登录后点「抓取论文列表」，程序会逐页翻，几百篇要一两分钟。
+
+抓到之后：「全选」→「解析 DOI 并加入下载」。
+抓到的条目可能没有 DOI，那就走标题解析。
+
+---
+
+### ⑦ 归档
+
+**用途**：论文是从别处（知网、同事、作者主页）拿到的 PDF，想让文件名和目录符合规范。
+
+**怎么填**：选择本地 PDF，程序读取首页文字猜标题，也可手动填标题、作者、年份、期刊、DOI。
+填好后点归档，文件按模板改名并复制进下载目录。
+
+---
+
+### ⑧ 网页文献
+
+**用途**：任何课题组的 publications 页面，一次抓出全部论文的标题、DOI、PDF 直链。
+
+**怎么填**：粘贴页面地址，例如 `https://web.mit.edu/group/publications.html`。
+
+**抓取**：用真实浏览器打开并逐轮加载（有的页面要滚到底或点「加载更多」），可能需要一两分钟。
+
+**抓完怎么用**：
+
+| 情况 | 处理 |
+|---|---|
+| 页面给了 PDF 直链 | 「下载选中」直接从那个链接下 |
+| 只有 DOI | 放进 ② 的下载队列，走机构/API/开放获取 |
+| 只有标题 | 填进 ① 去解析 |
+
+按钮「下载选中（PDF 直链 / DOI 分流）」会一次把三类都处理掉，并告诉你怎么分的。
+arXiv 预印本没有 DOI 时，程序会用 `10.48550/arXiv.<编号>` 合成。
+
+**命名**：下载的文件按年份分文件夹（`2026/`），文件名带标题和链接哈希，防止重名覆盖。
+
+---
+
+## 下载顺序是怎么定的
+
+不是所有文献都走同一条路。程序按 DOI 前缀判断出版社，再看年份和你开了哪些通道：
+
+| 文献类型 | 顺序 |
+|---|---|
+| 任何文献（开启 Sci-Hub 时） | **先试 Sci-Hub**，失败再走下面各行 |
+| ACS、RSC、Science、AIP 等订阅刊 | 机构浏览器 → 直连 → 开放获取 → PMC |
+| Wiley（10.1002） | Wiley API → 直连 → 开放获取 → PMC |
+| Elsevier（10.1016） | Elsevier API → 直连 → 机构浏览器 → 开放获取 → PMC |
+| MDPI、PLOS、Frontiers 等全开放出版社 | 直连 → 开放获取 → PMC |
+| 预印本（arXiv、SSRN、ChemRxiv） | 直连 → 开放获取 → 机构浏览器 |
+
+**开放获取那一步**会并行查 OpenAlex、Unpaywall、Europe PMC、Semantic Scholar、PMC、OSTI、Zenodo、HAL、Crossref、DOAJ，15 秒内回来多少用多少；结果按 24 小时缓存，同一批重跑不再重复查询。
+
+**预印本自动换正式版**：遇到 SSRN、Research Square 这类预印本 DOI，程序会用标题回 Crossref 找正式发表版本，找到就改下那一版（正式版常常是开放获取）。
+
+---
+
+## 常见问题
+
+**查不到 DOI / 大量「失败」**
+多半是被限流。确认「联系邮箱」已填；在 ① 里把并发调低；分批跑（一次几十条比一次几百条稳）。
+
+**下不到，但我知道学校有订阅**
+先点那一行的「机构登录」，在弹出窗口登录一次，再重下。若仍失败，看日志里那条的说明——「网络慢」和「没有订阅」是两回事，前者重试即可。
+
+**PDF 打开是空白页**
+旧版本会存下半截文件。现在下载后会校验文件结尾标记，不完整会重下；如果仍遇到，删掉那个文件重下。
+
+**一直卡在某一篇**
+浏览器通道单篇最长约两分半（75 秒 + 加倍重试）。可以先「暂停」，处理完别的再「继续」。
+
+**日志在哪**
+`%LOCALAPPDATA%\DOIFinder\doifinder.log`。每次下载结束会逐条记录没下到的文献和原因（`miss` 开头的行），排错看这个。
+
+**界面点按钮没反应**
+右上角状态栏会显示脚本错误和行号。刷新（Ctrl+F5）多半能解决。
+
+---
+
+## 密钥与隐私
+
+- 所有密钥（Elsevier、Wiley、Unpaywall 邮箱）**只存在本机** `%LOCALAPPDATA%\DOIFinder\settings.json`，不上传、不打包进安装包
+- 本仓库不含任何密钥；`settings.example.json` 里字段都是空的
+- 请遵守各出版社的 API 条款：Elsevier API key 与 Wiley TDM token 是发给个人账号的，**不能共享**
+- Sci-Hub 默认开启并优先尝试，可关闭。它是否合法取决于你所在地区，请自行判断
+- 「机构通道」用的是你自己的浏览器会话，程序不保存密码
+
+---
+
+## 目录结构
+
+```
+doi-finder/
+  server.py          本地 HTTP 服务、任务调度
+  doi_engine.py      标题 → DOI（Crossref + 证据校验）
+  validation.py      参考文献字段校验（广义 Jaccard）
+  downloader.py      DOI → PDF 的分步下载与去重
+  routing.py         按出版社/年份决定下载顺序
+  sources.py         开放获取来源聚合与缓存
+  elsevier.py        Elsevier 官方接口
+  wiley.py           Wiley TDM 接口
+  browser.py         浏览器通道（机构登录、Cloudflare、ResearchGate）
+  carsi.py           机构登录入口
+  entitlements.py    权限记忆（标记过没权限的期刊不再尝试）
+  journals.py        期刊追新
+  labpage.py         课题组主页抓取
+  classify.py        本地学科/主题判定（可选）
+  topics.py          OpenAlex 主题批量查询
+  web/               界面（原生 JS，无构建步骤）
+  dist/              打包产物（不入库）
+```
+
+---
+
+## 许可证
+
+本项目使用 MIT 许可证，见 [LICENSE](LICENSE)。
+第三方依赖各自遵循其原始许可证。
