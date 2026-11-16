@@ -423,7 +423,8 @@ def _fetch_pdf(url: str, referer: str = "") -> bytes | None:
     return None
 
 
-def download_pdfs(items: list[dict], dest: str, progress=None, stop_event=None) -> list[dict]:
+def download_pdfs(items: list[dict], dest: str, progress=None, stop_event=None,
+                  structure: str = "year") -> list[dict]:
     """把 items 里的直链 PDF 存到 dest。文件名用标题，冲突时加序号。"""
     import os
     import re as _re
@@ -435,8 +436,10 @@ def download_pdfs(items: list[dict], dest: str, progress=None, stop_event=None) 
         url = it.get("pdf") or ""
         title = (it.get("title") or f"paper_{i}").strip()
         year = (it.get("year") or "").strip() or "unknown"
-        # 按年份分类：lab/2026/2026_Title.pdf，年份缺失的放 lab/unknown/
-        folder = os.path.join(dest, year)
+        # sub folder from the same rule as every other page (filing.py); the default stays "by year"
+        import filing
+        sub = filing.sub_for(structure, {"year": year, "journal": it.get("journal")})
+        folder = os.path.join(dest, *sub.split("/")) if sub else dest
         os.makedirs(folder, exist_ok=True)
         safe = _re.sub(r'[\\/:*?"<>|]+', " ", title)
         safe = _re.sub(r"\s+", " ", safe).strip()[:90] or f"paper_{i}"

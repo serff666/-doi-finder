@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import threading
 import time
 import urllib.error
@@ -23,14 +24,14 @@ import elsevier
 import wiley
 import routing
 import preprints
+import filing
+from filing import sanitize, _BAD, _RESERVED  # noqa: F401  (kept importable from here)
 
 DEFAULT_TEMPLATE = "{first_author}_{year}_{title}"
 INDEX_NAME = ".doi-index.json"
 MAX_BYTES = 150 * 1024 * 1024
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
       "Chrome/131.0.0.0 Safari/537.36")
-
-_BAD = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 # The institutional channel borrows a campus subscription, and publishers police
 # it by volume: Elsevier has shut down whole university EZproxy ranges for a day
@@ -47,20 +48,6 @@ def _inst_gate() -> None:
         if gap > 0:
             time.sleep(gap)
         _inst_last[0] = time.time()
-
-
-# Names Windows refuses to create as files or folders, whatever the extension.
-_RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
-
-
-def sanitize(name: str, maxlen: int = 110) -> str:
-    name = _BAD.sub(" ", name or "")
-    name = re.sub(r"\s+", " ", name).strip(" .")
-    if len(name) > maxlen:
-        name = name[:maxlen].rstrip(" .")
-    if name.split(".")[0].strip().upper() in _RESERVED:
-        name = "_" + name
-    return name or "untitled"
 
 
 def _fit_name(dest: str, base: str, ext: str) -> str:
@@ -124,17 +111,9 @@ def recent_year(year) -> bool:
 
 def journal_folder(journal: str, year, volume, issue) -> str:
     """Relative folder: <Journal>/<Year>/Volume <V>, Issue <I>."""
-    vol, iss = str(volume or "").strip(), str(issue or "").strip()
-    if vol and iss:
-        vi = f"Volume {vol}, Issue {iss}"
-    elif vol:
-        vi = f"Volume {vol}"
-    elif iss:
-        vi = f"Issue {iss}"
-    else:
-        vi = "No volume-issue info"
-    yr = str(year or "").strip()[:4] or "Unknown year"
-    return "/".join([sanitize(journal or "Unknown journal", 80), sanitize(yr, 20), sanitize(vi, 60)])
+    return "/".join([sanitize(journal or "Unknown journal", 80),
+                     sanitize(str(year or "").strip()[:4] or "Unknown year", 20),
+                     sanitize(filing.volume_issue(volume, issue), 60)])
 
 
 def load_index(dest: str) -> dict:
@@ -317,7 +296,11 @@ def fetch_preprint(pick: dict, profile: str = "", timeout: float = 75.0) -> tupl
 
 def download_one(doi: str, dest: str, email: str, template: str,
                  index: dict, force: bool = False, scihub_conf: dict | None = None,
-                 inst_conf: dict | None = None, step=None, stop=None) -> dict:
+                 inst_conf: dict | None = None, step=None, stop=None,
+                 root: str | None = None, sub_of=None) -> dict:
+    """dest is the collection folder; root the workspace that holds the shared index (default: dest).
+    sub_of: '' / a '/'-path / a callable(meta) -> path, the folder under dest for this paper."""
+    root = root or dest
     t_start = time.monotonic()
     paused0 = float(getattr(stop, "paused_seconds", lambda: 0.0)())
 
@@ -345,13 +328,34 @@ def download_one(doi: str, dest: str, email: str, template: str,
         rec["note"] = "DOI 格式不正确"
         return rec
 
+    def sub_path(m: dict) -> str:
+        v = sub_of(m) if callable(sub_of) else (sub_of or "")
+        return str(v or "").strip("/")
+
     hit = index.get(doi)
     if hit and not force:
-        path = os.path.join(dest, hit.get("file", ""))
+        path = os.path.join(root, *str(hit.get("file", "")).split("/"))
         if os.path.exists(path):
-            rec.update({"status": "exists", "file": hit["file"], "title": hit.get("title", ""),
-                        "note": "已存在，跳过"})
-            return rec
+            if filing.inside(path, dest):
+                rec.update({"status": "exists", "file": os.path.relpath(path, dest).replace(os.sep, "/"),
+                            "title": hit.get("title", ""), "note": "已存在，跳过"})
+                return rec
+            # downloaded earlier for another collection: reuse the file instead of fetching it again
+            sub = sub_path(hit.get("meta") or {})
+            tdir = os.path.join(dest, *sub.split("/")) if sub else dest
+            target = os.path.join(tdir, os.path.basename(path))
+            try:
+                if not os.path.exists(target):
+                    os.makedirs(tdir, exist_ok=True)
+                    shutil.copy2(path, target)
+                    note = "工作区里已有这篇，已复制到本集合，没有重复下载"
+                else:
+                    note = "已存在，跳过"
+                rec.update({"status": "exists", "file": os.path.relpath(target, dest).replace(os.sep, "/"),
+                            "title": hit.get("title", ""), "note": note})
+                return rec
+            except OSError:
+                pass            # cannot copy: fall through and download it normally
 
     try:
         meta = sources.work_meta(doi, email)
@@ -417,12 +421,17 @@ def download_one(doi: str, dest: str, email: str, template: str,
         errors.append("机构通道：没有找到 Chrome / Edge")
 
     def finish(got: dict) -> dict:
-        path, name = _save(dest, base, got["data"], force)
+        sub = sub_path(meta)
+        tdir = os.path.join(dest, *sub.split("/")) if sub else dest
+        path, name = _save(tdir, base, got["data"], force)
         if not path:
             rec.update({"status": "failed", "note": f"写入失败：{name}"})
             return rec
-        entry = {"file": name, "title": meta.get("title", ""), "saved_at": int(time.time()),
-                 "source": got["source"], "url": got["url"]}
+        name = os.path.relpath(path, dest).replace(os.sep, "/")           # relative to the collection
+        entry = {"file": os.path.relpath(path, root).replace(os.sep, "/"),   # relative to the workspace
+                 "title": meta.get("title", ""), "saved_at": int(time.time()),
+                 "source": got["source"], "url": got["url"],
+                 "meta": {k: meta.get(k) for k in ("year", "journal", "first_author", "volume", "issue") if meta.get(k)}}
         index[doi] = entry
         index[requested_doi] = entry   # else a preprint DOI would be re-downloaded on every run
         rec.update({"status": "downloaded", "file": name, "url": got["url"],
@@ -723,23 +732,53 @@ def download_one(doi: str, dest: str, email: str, template: str,
     return rec
 
 
+def import_legacy_indexes(root: str, folder: str, index: dict) -> int:
+    """Older versions kept one .doi-index.json per folder.  Fold the ones under `folder` into the
+    workspace index (paths made relative to `root`) so those files still count as downloaded."""
+    added = 0
+    if not os.path.isdir(folder):
+        return 0
+    base_depth = folder.rstrip(os.sep).count(os.sep)
+    for dp, dns, fns in os.walk(folder):
+        if dp.count(os.sep) - base_depth >= 4:
+            dns[:] = []
+        if INDEX_NAME not in fns or os.path.normcase(os.path.abspath(dp)) == os.path.normcase(os.path.abspath(root)):
+            continue
+        for doi, e in load_index(dp).items():
+            if doi in index or not isinstance(e, dict) or not e.get("file"):
+                continue
+            full = os.path.join(dp, *str(e["file"]).split("/"))
+            if os.path.exists(full):
+                index[doi] = dict(e, file=os.path.relpath(full, root).replace(os.sep, "/"))
+                added += 1
+    return added
+
+
 def download_many(dois: list[str], dest: str, email: str = "", template: str = DEFAULT_TEMPLATE,
                   progress=None, stop_event=None, force: bool = False,
                   scihub_conf: dict | None = None,
                   inst_conf: dict | None = None, step=None, workers: int = 1,
-                  folders: dict | None = None) -> list[dict]:
-    """Download a batch. workers>1 runs several DOIs at once, results stay in order."""
+                  folders: dict | None = None, root: str | None = None,
+                  structure: str = "flat") -> list[dict]:
+    """Download a batch into the collection folder `dest` (inside the workspace `root`).
+
+    One index at the workspace root remembers every file, so a paper already filed under another
+    collection is copied, not downloaded again.  `folders` maps a DOI to its sub path (journal
+    library); otherwise `structure` (see filing.py) decides the sub path from the paper's metadata.
+    workers>1 runs several DOIs at once, results stay in order."""
     os.makedirs(dest, exist_ok=True)
+    root = root or dest
+    os.makedirs(root, exist_ok=True)
     folders = folders or {}
-    indexes: dict[str, dict] = {}
+    index = load_index(root)
+    import_legacy_indexes(root, dest, index)
     lock = threading.Lock()
 
-    def index_for(d: str) -> dict:
-        with lock:
-            if d not in indexes:
-                os.makedirs(d, exist_ok=True)
-                indexes[d] = load_index(d)
-            return indexes[d]
+    def sub_of_for(doi: str):
+        fixed = folders.get((doi or "").strip().lower())
+        if fixed:
+            return fixed
+        return lambda m: filing.sub_for(structure, m)
 
     results: list[dict | None] = [None] * len(dois)
     total = len(dois)
@@ -748,25 +787,21 @@ def download_many(dois: list[str], dest: str, email: str = "", template: str = D
 
     def task(i: int, doi: str) -> None:
         nonlocal done
-        sub = folders.get((doi or "").strip().lower(), "")
-        d = os.path.join(dest, *sub.split("/")) if sub else dest
-        index = index_for(d)
         if stop_event and stop_event.is_set():
             rec = {"doi": doi, "status": "stopped", "note": "已停止", "file": "", "url": "",
                    "source": "", "title": "", "year": ""}
         else:
             try:
-                rec = download_one(doi, d, email, template, index, force,
-                                   scihub_conf, inst_conf, step=step, stop=stop_event)
-                if sub and rec.get("file"):
-                    rec["file"] = sub + "/" + rec["file"]
+                rec = download_one(doi, dest, email, template, index, force,
+                                   scihub_conf, inst_conf, step=step, stop=stop_event,
+                                   root=root, sub_of=sub_of_for(doi))
             except Exception as e:  # noqa: BLE001 - one DOI must not kill the batch
                 rec = {"doi": doi, "status": "failed", "note": f"{type(e).__name__}: {e}",
                        "file": "", "url": "", "source": "", "title": "", "year": ""}
         with lock:
             results[i] = rec
             done += 1
-            save_index(d, index)
+            save_index(root, index)
             if progress:
                 progress(done, total, rec)
 
