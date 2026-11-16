@@ -1,0 +1,6 @@
+# Runtime (beyond the standard library)
+openpyxl>=3.1     # Excel export
+pypdf>=4.0        # read text from PDFs (archive title/year guess)
+
+# Optional: packaging
+pyinstaller>=6.0
