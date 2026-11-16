@@ -2,6 +2,8 @@
 
 **Unreleased:** **Logic audit:** download hints for Elsevier/Wiley were silently dropped; the "no open-access record" status could never trigger; preprint DOIs were re-downloaded every run; long/Chinese filenames and Windows reserved names could fail to save; same-title files could overwrite each other; paused time counted toward the per-paper timeout; a stop after the last paper marked the job stopped; journal year folder could disagree with its volume/issue and volumes sorted as text. All fixed with tests.  Sci-Hub certificate verification is now on by default (opt-out checkbox in Settings); journal tab resolves titles to ISSN.
 
+**Terminal client (new):** `python tui.py` (or `./run.sh tui`, `run_tui.cmd`) — a Claude-Code-style prompt: paste titles to find DOIs, paste DOIs to download, `/search`, `/journal`, `/download 1 3 5-8`, `/retry`, `/set`. Standard library only, same engine and settings as the web UI. Tested on Linux with a terminal emulator and a fake engine; **not yet run on Windows** (uses msvcrt + VT mode). The web page lost its hero title and card shadows.
+
 **2.1.1 (takeover):** restored the email input, fixed `/api/jobs`, archive path guard, front-matter filter in harvest, cross-platform helpers, LF line endings, tests + CI. Also: translation code fully removed, lint (ruff F/E9) clean, dead harvest JS removed, journal tab ⑨ now has a type filter (research / review / exclude corrections) that sets the default selection and shows a type column. Still unverified: real Crossref harvest, real downloads and the live UI (no network in the build sandbox).
 
 This file lists what was changed in this build and, just as importantly, what does

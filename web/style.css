@@ -331,3 +331,27 @@ tr.editing > td { background: #eef3ff; }
 .setcard > :nth-child(2) { margin-top: 0; }
 .setcard p, .setcard .rule p { font-size: 13px; line-height: 1.6; color: var(--muted); margin: 0 0 12px; }
 .setcard .rule { margin-top: 0; }
+
+/* flat layer: no hero, no card shadows, underline tabs (original bright palette kept) */
+header { position: sticky; top: 0; z-index: 40; height: 56px; }
+.brand small { display: none; }
+.eyebrow, .side-eyebrow { display: none; }
+.panel { box-shadow: none; border-radius: 12px; }
+.settingsbar { background: none; border: 0; box-shadow: none; padding: 14px 0; margin: 0; }
+.tabs { gap: 2px; border-bottom: 1px solid var(--line); margin: 0 0 18px; }
+.tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 9px 11px; margin-bottom: -1px; font-weight: 600; font-size: 13px; color: var(--muted); }
+.tabs button:hover { background: none; color: var(--ink); }
+.tabs button.active { background: none; color: var(--blue); border-bottom-color: var(--blue); }
+.summary { gap: 0; border: 1px solid var(--line); border-radius: 12px; background: #fff; overflow: hidden; }
+.stat { border: 0; border-radius: 0; background: none; }
+.stat + .stat { border-left: 1px solid var(--line); }
+.layout > .panel + .panel, .settings-grid > .panel + .panel { margin-top: 0; }
+select { background: #fff; border: 1px solid var(--line); border-radius: 9px; padding: 7px 10px; font-size: 13px; }
+.set-field select { width: 100%; }
+#tab-journaldl .filters { display: flex; flex-wrap: wrap; align-items: flex-end; }
+#tab-journaldl .filters .set-field { min-width: 110px; }
+#tab-journaldl .filters .set-field.grow { flex: 1 1 280px; }
+#tab-journaldl .filters .btn { height: 36px; align-self: flex-end; }
+#jdInfo { font-size: 13px; line-height: 1.7; color: var(--muted); }
+#jdInfo strong { display: inline; font-size: 13px; color: var(--ink); }
+.tabpanel .settings-grid .setcard { margin-top: 0; }
