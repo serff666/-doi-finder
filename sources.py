@@ -23,14 +23,14 @@ def _ua(mailto: str = "") -> str:
     return UA_BASE + (f" mailto:{mailto}" if mailto else "")
 
 
-def get_json(url: str, mailto: str = "", timeout: int = 15, tries: int = 3):
+def get_json(url: str, mailto: str = "", timeout: int = 15, tries: int = 3, headers: dict | None = None):
     import netpolicy
     url = netpolicy.prepare(url, mailto)
     last = None
     for attempt in range(tries):
         try:
             req = urllib.request.Request(url, headers={
-                "User-Agent": _ua(mailto), "Accept": "application/json"})
+                "User-Agent": _ua(mailto), "Accept": "application/json", **(headers or {})})
             with netpolicy.gate(url, mailto), urllib.request.urlopen(req, timeout=timeout) as r:
                 return json.loads(r.read().decode("utf-8", "replace"))
         except urllib.error.HTTPError as e:
@@ -278,6 +278,47 @@ def hal_candidates(doi: str) -> list[dict]:
     for doc in ((data.get("response") or {}).get("docs") or []):
         if doc.get("fileMain_s"):
             out.append(_loc(doc["fileMain_s"], "HAL", "published"))
+    return [x for x in out if x]
+
+
+def core_candidates(doi: str) -> list[dict]:
+    """CORE (core.ac.uk): the largest aggregator of repository full texts. Needs a free API key."""
+    import netpolicy
+    key = netpolicy.core_key()
+    if not key:
+        return []
+    q = urllib.parse.quote(f'doi:"{_norm_doi(doi)}"')
+    data = get_json(f"https://api.core.ac.uk/v3/search/works?q={q}&limit=3", timeout=15, tries=1,
+                    headers={"Authorization": f"Bearer {key}"})
+    want = _norm_doi(doi).lower()
+    out = []
+    for item in data.get("results") or []:
+        got = {_norm_doi(item.get("doi")).lower()}
+        for ident in item.get("identifiers") or []:
+            if isinstance(ident, str) and ident.lower().startswith("doi:"):
+                got.add(_norm_doi(ident[4:]).lower())
+        if want not in got:
+            continue            # CORE's text search is fuzzy: only accept an exact DOI match
+        out.append(_loc(item.get("downloadUrl"), "CORE", "repository"))
+        for u in item.get("sourceFulltextUrls") or []:
+            if str(u).lower().endswith(".pdf"):
+                out.append(_loc(u, "CORE", "repository"))
+    return [x for x in out if x]
+
+
+def internet_archive_candidates(doi: str) -> list[dict]:
+    """Internet Archive Scholar (fatcat catalogue): archived copies of open-access PDFs."""
+    d = urllib.parse.quote(_norm_doi(doi), safe="")
+    data = get_json(f"https://api.fatcat.wiki/v0/release/lookup?doi={d}&expand=files&hide=abstracts,refs",
+                    timeout=15, tries=1)
+    out, rank = [], {"webarchive": 0, "archive": 1, "repository": 2}
+    for f in data.get("files") or []:
+        if (f.get("mimetype") or "application/pdf") != "application/pdf":
+            continue
+        urls = [u for u in (f.get("urls") or []) if u.get("url") and u.get("rel") in rank]
+        urls.sort(key=lambda u: rank[u["rel"]])
+        for u in urls[:2]:
+            out.append(_loc(u["url"], "Internet Archive", "archived"))
     return [x for x in out if x]
 
 
@@ -661,6 +702,8 @@ def resolve_oa(doi: str, email: str = "", diag: list | None = None) -> list[dict
         ("HAL", lambda: hal_candidates(doi)),
         ("Crossref", lambda: crossref_oa_links(doi, email)),
         ("DOAJ", lambda: doaj_candidates(doi)),
+        ("CORE", lambda: core_candidates(doi)),
+        ("Internet Archive", lambda: internet_archive_candidates(doi)),
         ("Elsevier", lambda: elsevier_candidates(doi, email)),
         ("IEEE", lambda: ieee_candidates(doi)),
     ]

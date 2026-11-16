@@ -20,6 +20,8 @@
   "elsevier_key": "",
   "elsevier_token": "",
   "wiley_token": "",
+  "openalex_key": "",
+  "core_key": "",
 
   "journal_subs": [],
   "browser": "auto",

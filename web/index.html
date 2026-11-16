@@ -192,12 +192,16 @@ https://doi.org/10.1073/pnas.2321668121"></textarea>
         <div class="side-eyebrow">Download rules</div>
         <h2>下载说明</h2>
         <div class="rule">
-          <strong>解析顺序</strong>
-          <p>先查开放获取：arXiv → OpenAlex → Unpaywall → Europe PMC → PMC → 出版社落地页；Sci-Hub 默认优先尝试（可在下方关闭），请自行判断所在地区的法律。</p>
+          <strong>每篇论文的尝试顺序</strong>
+          <ol class="steps">
+            <li><b>Sci-Hub / Sci-Net</b>：开启时最先尝试（可在下方关闭；请自行判断所在地区的法律）</li>
+            <li><b>出版社通道</b>：按 DOI 前缀选择——Elsevier / Wiley 用你自己的 API 钥匙；订阅刊（ACS、RSC 等）走机构登录浏览器；开放出版社直接取 PDF</li>
+            <li><b>开放获取</b>：并行查询 OpenAlex、Unpaywall、Europe PMC、PMC、Semantic Scholar、CORE、Internet Archive、Zenodo、HAL、DOAJ 等，取第一个能下到有效 PDF 的来源</li>
+          </ol>
         </div>
         <div class="rule">
-          <strong>没有 OA 版本时</strong>
-          <p>若关闭 Sci-Hub 兜底，该行标为「无开放获取」，可以点行内链接在浏览器打开出版社页面。</p>
+          <strong>都失败时</strong>
+          <p>该行会标出原因（无开放获取 / 需订阅 / 验证码 / 超时）。可点「浏览器打开」自行下载，或点「机构登录」登录一次后重试；失败的行可以单独重试。</p>
         </div>
         <label class="setting"><input id="scihubEnable" type="checkbox" checked><span>使用 Sci-Hub / Sci-Net 兜底</span></label>
         <details class="rule mirror-block">
@@ -226,6 +230,7 @@ https://doi.org/10.1073/pnas.2321668121"></textarea>
           <input class="smallinput" id="email" type="email" placeholder="联系邮箱（可选）— Crossref / Unpaywall 的“礼貌通道”，查询更快更稳；只存在本机">
           <input class="smallinput" id="elsevierKey" placeholder="Elsevier API key — dev.elsevier.com 免费申请（必填才有用）">
           <input class="smallinput" id="elsevierToken" placeholder="insttoken（订阅全文需要，向图书馆管理员索取；OA 文章不需要）">
+          <input class="smallinput" id="coreKey" placeholder="CORE API key（可选）— core.ac.uk/services/api 免费申请，开放获取全文聚合库，能多命中一批机构库里的 PDF">
           <input class="smallinput" id="openalexKey" placeholder="OpenAlex API key — openalex.org/settings/api 免费申请（2026 年起必须有，否则只剩演示额度）">
           <input class="smallinput" id="wileyToken" placeholder="Wiley TDM token — 授权后免费（可选）">
           <div class="subnote">密钥只存在本机 <code>settings.json</code>，不会上传。你申请到的 key 通常<b>绑定所在机构的订阅</b>——不要分享给他人，也不要打包进安装包；每位使用者应各自申请。付费且没有 API 授权的文章，本软件不做承诺。</div>
@@ -494,6 +499,11 @@ https://doi.org/10.1073/pnas.2321668121"></textarea>
   <section class="tabpanel" id="tab-journaldl" hidden>
     <section class="panel" style="padding:22px 25px">
       <div class="section-title"><h2>期刊文库</h2><span class="tiny-tag">整刊回溯 · 按刊/年/卷期归档</span></div>
+      <ol class="aux" style="margin:4px 0 14px 18px;line-height:1.7">
+        <li><b>选刊</b>：填期刊名或 ISSN（年份留空 = 从创刊到今年）</li>
+        <li><b>抓取书目</b>：从 Crossref 列出这本刊的全部文章，并按类型默认勾选</li>
+        <li><b>下载选中</b>：按「刊名 / 年份 / Volume 卷, Issue 期」分文件夹保存</li>
+      </ol>
 
       <div class="filters">
         <div class="set-field grow"><label for="jdIssn">期刊（从已关注里选，或填 ISSN）</label>
@@ -513,6 +523,8 @@ https://doi.org/10.1073/pnas.2321668121"></textarea>
         <button class="btn primary" id="jdRun" type="button">抓取书目</button>
         <button class="btn" id="jdClear" type="button">清空</button>
       </div>
+
+      <div id="jdInfo" class="rule" style="margin:0 0 12px"></div>
 
       <div id="jdFeedback" class="feedback"></div>
 

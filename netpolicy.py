@@ -17,11 +17,19 @@ import threading
 import time
 import urllib.parse
 
-_state = {"openalex_key": "", "email": ""}
+_state = {"openalex_key": "", "email": "", "core_key": ""}
 
 
 def set_openalex_key(key: str) -> None:
     _state["openalex_key"] = (key or "").strip()
+
+
+def set_core_key(key: str) -> None:
+    _state["core_key"] = (key or "").strip()
+
+
+def core_key() -> str:
+    return _state["core_key"]
 
 
 def set_email(email: str) -> None:

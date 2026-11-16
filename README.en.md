@@ -64,7 +64,11 @@ Sci-Hub (if enabled) is always tried first; after that the order depends on the 
 
 Sci-Hub, when enabled, is always tried first.
 
-Open-access resolution queries OpenAlex, Unpaywall, Europe PMC, Semantic Scholar, PMC, OSTI, Zenodo, HAL, Crossref and DOAJ in parallel within a 15-second budget, and caches results for 24 hours.
+Open-access resolution queries OpenAlex, Unpaywall, Europe PMC, Semantic Scholar, PMC, OSTI, Zenodo, HAL, Crossref, DOAJ, CORE (needs a free API key) and Internet Archive Scholar in parallel within a 15-second budget, and caches results for 24 hours.
+
+## Journal facts (optional)
+
+On the whole-journal tab, a panel can show a journal's average / median review time, JCR quartile, CAS zone and impact factor. The data comes from the public [CrushSCI-Journal-Review-Time](https://github.com/wangshunqi2020-commits/CrushSCI-Journal-Review-Time) dataset (CC BY-NC 4.0: non-commercial use, attribution required). It is **not bundled**: click "Download journal data" and it is saved on your own machine. Review days are calendar days from receipt to acceptance and are observed samples, not guaranteed timelines.
 
 ## Keys and privacy
 
