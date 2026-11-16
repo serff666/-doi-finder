@@ -353,7 +353,17 @@ def harvest(issn: str, year_from: int = 0, year_to: int = 0,
     # 不填起始年就从刊的第一篇算起：先问一次 Crossref 最早的年份，
     # 否则 1900 起步要白跑一百多次空请求，既慢又容易被限流。
     if not year_from:
-        year_from = _earliest_year(issn) or 1900
+        year_from = _earliest_year(issn)
+        if not year_from:
+            # Distinguish "unknown journal" from "no dates": without this the loop starts at 1900
+            # and every year fails with an unhelpful HTTP 404.
+            try:
+                _get(f"{CR}/journals/{urllib.parse.quote(issn, safe='')}", rows=2)
+            except Exception as e:  # noqa: BLE001
+                if errors is not None:
+                    errors.append(f"Crossref 查不到这本期刊（ISSN {issn}）：{e}")
+                return []
+            year_from = 1900
     first = int(year_from)
     last = int(year_to) if year_to else today_year
 

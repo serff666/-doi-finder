@@ -1280,8 +1280,8 @@ class Handler(BaseHTTPRequestHandler):
 
         if p == "/api/journal/harvest":
             issn = str(body.get("issn") or "").strip()
-            if not issn:
-                return self._json({"error": "缺少 issn"}, 400)
+            if not re.fullmatch(r"\d{4}-?\d{3}[\dXx]", issn):
+                return self._json({"error": "需要 ISSN（形如 1759-0876），期刊名请先解析成 ISSN"}, 400)
             _cleanup_jobs()
             jid = uuid.uuid4().hex[:12]
             JOBS[jid] = {"created": time.time(), "state": "running", "kind": "harvest",

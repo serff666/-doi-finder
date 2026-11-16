@@ -1645,13 +1645,22 @@ window.addEventListener("unhandledrejection", (e) => {
     };
 
     const setFb = (msg, bad) => feedback("jdFeedback", msg, !!bad);
-    const issnOf = () => {
+    const ISSN_RE = /^\d{4}-?\d{3}[\dXx]$/;
+    // The box accepts an ISSN, a followed journal, or a plain journal title (e.g. what the
+    // browser shows after picking a suggestion). Titles are resolved to an ISSN via Crossref.
+    async function resolveJournal() {
       const raw = (document.getElementById("jdIssn").value || "").trim();
-      if (!raw) return "";
-      const known = state.journals.find(
-        (j) => j.title.toLowerCase() === raw.toLowerCase());
-      return known ? known.issn : raw;
-    };
+      if (!raw) return null;
+      if (ISSN_RE.test(raw)) {
+        const k = state.journals.find((j) => j.issn === raw);
+        return { issn: raw.toUpperCase(), title: k ? k.title : "" };
+      }
+      const known = state.journals.find((j) => j.title.toLowerCase() === raw.toLowerCase());
+      if (known) return { issn: known.issn, title: known.title };
+      const d = await api("/api/journal/resolve", { names: [raw] });
+      const hit = (d.resolved || [])[0];
+      return hit && hit.issn ? { issn: hit.issn, title: hit.title || raw } : null;
+    }
 
 
     // 输入刊名时给候选：选中的那条会把 ISSN 填进来，避免同名前缀的期刊被张冠李戴
@@ -1716,9 +1725,21 @@ window.addEventListener("unhandledrejection", (e) => {
       drawList();
     });
 
-    run.addEventListener("click", () => {
-      const issn = issnOf();
-      if (!issn) { setFb("先填 ISSN，或从已关注期刊里选一个", true); return; }
+    run.addEventListener("click", async () => {
+      if (!(document.getElementById("jdIssn").value || "").trim()) {
+        setFb("先填期刊名或 ISSN", true); return;
+      }
+      run.disabled = true;
+      setFb("正在确认期刊…");
+      let hit = null;
+      try { hit = await resolveJournal(); } catch (e) { /* handled below */ }
+      if (!hit) {
+        run.disabled = false;
+        setFb("找不到这本期刊。请从下拉建议里选一个，或直接填 ISSN（例如 1759-0876）", true);
+        return;
+      }
+      const issn = hit.issn;
+      st.journal = hit.title || "";
       const from = Number(document.getElementById("jdFrom").value || 0);
       const to = Number(document.getElementById("jdTo").value || 0);
       run.disabled = true;
@@ -1765,8 +1786,7 @@ window.addEventListener("unhandledrejection", (e) => {
       const picked = [...st.sel].map((i) => st.rows[i]).filter((x) => x && x.doi);
       if (!picked.length) { setFb("没有选中条目", true); return; }
       const raw = (document.getElementById("jdIssn").value || "").trim();
-      const known = state.journals.find((j) => j.issn === issnOf());
-      const journal = known ? known.title : ((st.rows[0] && st.rows[0].journal) || raw);
+      const journal = st.journal || (st.rows[0] && st.rows[0].journal) || raw;
       const dest = ($("dlDir") && $("dlDir").value.trim()) || "";
       const btn = document.getElementById("jdDownload");
       btn.disabled = true;

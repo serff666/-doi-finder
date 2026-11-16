@@ -5,6 +5,7 @@ import sys
 import tempfile
 import threading
 import json
+import urllib.error
 import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -97,3 +98,38 @@ def test_journal_tab_has_type_filter():
     html = open(os.path.join(ROOT, "web", "index.html"), encoding="utf-8").read()
     js = open(os.path.join(ROOT, "web", "app.js"), encoding="utf-8").read()
     assert 'id="jdKind"' in html and "selectByKind" in js
+
+
+def test_harvest_rejects_journal_title_instead_of_issn():
+    """The page once sent a journal *title* as the ISSN, which ended in 'HTTP 404' for year 1900."""
+    import server
+    httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+    port = httpd.server_address[1]
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        base = f"http://127.0.0.1:{port}"
+        req = urllib.request.Request(base + "/api/journal/harvest",
+                                     data=json.dumps({"issn": "Wiley Interdisciplinary Reviews"}).encode(),
+                                     headers={"Content-Type": "application/json", "Origin": base})
+        try:
+            urllib.request.urlopen(req, timeout=5)
+            raise AssertionError("expected HTTP 400")
+        except urllib.error.HTTPError as e:
+            assert e.code == 400 and "ISSN" in json.loads(e.read())["error"]
+    finally:
+        httpd.shutdown()
+
+
+def test_harvest_unknown_journal_reports_clear_error():
+    import journals
+    orig = journals._get
+
+    def boom(url, rows=3):
+        raise RuntimeError("HTTP 404")
+    journals._get = boom
+    try:
+        errs = []
+        assert journals.harvest("0000-0000", errors=errs) == []
+        assert errs and "查不到这本期刊" in errs[0]
+    finally:
+        journals._get = orig
