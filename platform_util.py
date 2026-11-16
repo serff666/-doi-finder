@@ -153,10 +153,6 @@ def _tk_pick(kind: str, title: str, initial: str = "", patterns: tuple = (), mul
     root.withdraw()
     root.attributes("-topmost", True)
     try:
-        root.update(); root.lift(); root.focus_force()   # keep the dialog in front of the browser
-    except Exception:
-        pass
-    try:
         if kind == "folder":
             got = filedialog.askdirectory(title=title, initialdir=initial or None)
             return [got] if got else []
@@ -176,12 +172,9 @@ def _filter_string(patterns: tuple) -> str:
 
 def pick_folder(title: str, initial: str = "") -> str:
     """Ask the user for a folder. "" when cancelled; raises if no dialog can be shown."""
-    if IS_WIN:
-        try:
-            got = _powershell_pick("folder", title, initial)
-            return got[0] if got else ""
-        except Exception:  # noqa: BLE001  - fall back to Tk
-            pass
+    if IS_WIN:                      # one path on Windows: the native dialog, no second implementation
+        got = _powershell_pick("folder", title, initial)
+        return got[0] if got else ""
     got = _tk_pick("folder", title, initial)
     return got[0] if got else ""
 
@@ -189,8 +182,5 @@ def pick_folder(title: str, initial: str = "") -> str:
 def pick_files(title: str, patterns: tuple = (), multi: bool = False) -> list[str]:
     """Ask the user for file(s). patterns: (("PDF", "*.pdf"), ...). [] when cancelled."""
     if IS_WIN:
-        try:
-            return _powershell_pick("file", title, filter_=_filter_string(patterns), multi=multi)
-        except Exception:  # noqa: BLE001  - fall back to Tk
-            pass
+        return _powershell_pick("file", title, filter_=_filter_string(patterns), multi=multi)
     return _tk_pick("file", title, patterns=patterns, multi=multi)
