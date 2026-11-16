@@ -16,3 +16,4 @@ jobs:
       - run: ruff check --select E9,F63,F7,F82 .
       - run: pytest -q
       - run: python tests/e2e_journal.py
+      - run: python tests/web_retry_check.py
