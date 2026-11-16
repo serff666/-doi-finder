@@ -104,7 +104,7 @@ dois = [i["doi"] for i in items]
 res = wait(call("/api/download", {"dois": dois, "dir": OUT, "workers": 3,
                                   "layout": {"journal": JOURNAL, "items": items}})["job_id"])
 assert res["state"] == "done", res
-got = sorted(os.path.relpath(os.path.join(d, f), OUT) for d, _, fs in os.walk(OUT) for f in fs if f.endswith(".pdf"))
+got = sorted(os.path.relpath(os.path.join(d, f), OUT).replace(os.sep, "/") for d, _, fs in os.walk(OUT) for f in fs if f.endswith(".pdf"))
 assert len(got) == 48, len(got)
 dirs = sorted({os.path.dirname(g) for g in got})
 assert dirs[0] == f"{JOURNAL}/2023/Volume 13, Issue 1", dirs[0]
