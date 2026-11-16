@@ -66,6 +66,33 @@ def find_year(text, *, last: bool = False) -> str:
     return years[-1] if last else years[0]
 
 
+_Y = r"(19[89]\d|20\d\d)"
+# "J. Org. Chem. 2025, 90, 2052-2061", "Chem. Sci., 2025, 16, 123": year, volume, pages
+_CITE_LINE = re.compile(r"(?<!\d)" + _Y + r"\s*,\s*\d{1,4}\s*(?:\(\s*\d+\s*\)\s*)?,\s*[A-Za-z]?\d+")
+# "Published: February 25, 2025", "Received 3 March 2024", "Publication Date (Web): ..."
+_DATED = re.compile(r"(?:Published|Publication\s+Date|Accepted|Received|Online)\b[^\n]{0,60}?(?<!\d)" + _Y + r"(?!\d)", re.I)
+_COPYRIGHT = re.compile(r"(?:©|\(c\)|copyright)\s*" + _Y + r"(?!\d)", re.I)
+
+
+def year_from_first_page(text) -> str:
+    """The publication year of a paper from the text of its first page, '' if unsure.
+
+    The first page also names older papers in its body ("... coworkers in 2002 showed ..."),
+    so the last or largest year in the text is not the paper's year. The citation line
+    ("J. Org. Chem. 2025, 90, 2052-2061") says it outright, then a Published/Received date,
+    then the copyright line. Only when none of those exists does the newest year decide.
+    """
+    import datetime
+    text = str(text or "")
+    limit = datetime.date.today().year + 1
+    for rx in (_CITE_LINE, _DATED, _COPYRIGHT):
+        for m in rx.finditer(text):
+            if 1980 <= int(m.group(1)) <= limit:
+                return m.group(1)
+    years = [y for y in _YEAR_IN.findall(text) if 1980 <= int(y) <= limit]
+    return max(years) if years else ""
+
+
 def year_of(value) -> str:
     m = re.match(r"\s*(\d{4})", str(value or ""))
     return m.group(1) if m else ""
