@@ -145,13 +145,17 @@ def collect():
     return probes
 
 
-PAGE = """<!doctype html><meta charset=utf-8><body><script>
-%s
-</script><script src="file://%s/i18n.en.js"></script><script src="file://%s/i18n.js"></script>
+PAGE = """<!doctype html><meta charset=utf-8><body><script>%s</script><script>%s</script>
 <script>
-DF_I18N.apply("en");
-const probes = %s;
-document.title = "RESULT:" + JSON.stringify(probes.map((p) => DF_I18N.t(p)));
+window.addEventListener("load", () => setTimeout(() => {     // after i18n.js has finished its own start-up
+  const pre = document.createElement("pre"); pre.id = "result";
+  try {
+    DF_I18N.apply("en");
+    const probes = %s;
+    pre.textContent = JSON.stringify(probes.map((p) => DF_I18N.t(p)));
+  } catch (e) { pre.textContent = "ERROR:" + e; }
+  document.body.appendChild(pre);
+}, 50));
 </script>"""
 
 
@@ -159,15 +163,16 @@ def run_chrome(probes):
     chrome = shutil.which("google-chrome") or shutil.which("chromium") or shutil.which("chromium-browser")
     if not chrome:
         return None
+    read = lambda n: open(os.path.join(WEB, n), encoding="utf-8").read().replace("</script", "<\\/script")
     with tempfile.TemporaryDirectory() as td:
-        page = os.path.join(td, "p.html")
-        open(page, "w", encoding="utf-8").write(PAGE % ("", WEB, WEB, json.dumps(probes, ensure_ascii=False)))
-        r = subprocess.run([chrome, "--headless=new", "--no-sandbox", "--disable-gpu", "--allow-file-access-from-files",
-                            "--virtual-time-budget=4000", "--dump-dom", "file://" + page],
-                           capture_output=True, text=True, timeout=90)
-    m = re.search(r"<title>RESULT:(.*?)</title>", r.stdout, re.S)
+        page = os.path.join(td, "p.html")       # scripts are inlined: no file:// loading, works on any runner
+        open(page, "w", encoding="utf-8").write(PAGE % (read("i18n.en.js"), read("i18n.js"), json.dumps(probes, ensure_ascii=False)))
+        r = subprocess.run([chrome, "--headless=new", "--no-sandbox", "--disable-gpu", "--user-data-dir=" + os.path.join(td, "prof"),
+                            "--virtual-time-budget=10000", "--dump-dom", "file://" + page],
+                           capture_output=True, text=True, timeout=120)
+    m = re.search(r'<pre id="result">(.*?)</pre>', r.stdout, re.S)
     if not m:
-        raise SystemExit("could not read the result from Chrome:\n" + r.stdout[:500] + r.stderr[-500:])
+        raise SystemExit("could not read the result from Chrome:\n" + r.stdout[:600] + r.stderr[-300:])
     import html as H
     return json.loads(H.unescape(m.group(1)))
 
