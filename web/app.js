@@ -60,13 +60,25 @@ window.addEventListener("unhandledrejection", (e) => {
       .replace(/^doi\s*:\s*/i, "").replace(/\s+/g, "");
     return /^10\.\d{4,9}\/\S+$/i.test(t) ? t : "";
   }
+  // 把浏览器/网络层的英文报错换成人话；其余原样给出，不吞信息
+  function friendly(msg) {
+    const m = String(msg || "");
+    if (/failed to fetch|networkerror|load failed|network request failed/i.test(m)) {
+      return "和软件后台的连接断了（后台可能已关闭或在重启）。请确认软件还开着，再点重试";
+    }
+    if (/timed? ?out|timeout|unreachable|refused|reset by peer|getaddrinfo|name or service|temporary failure|\bssl\b|connection/i.test(m)) {
+      return "网络不通或超时：" + m + "。检查网络后点重试";
+    }
+    return m;
+  }
   async function api(path, body) {
     const opt = body === undefined ? {} : {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
     };
-    const res = await fetch(path, opt);
+    let res;
+    try { res = await fetch(path, opt); } catch (e) { throw new Error(friendly(e.message)); }
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    if (!res.ok) throw new Error(friendly(data.error || `HTTP ${res.status}`));
     return data;
   }
   function saveBlob(blob, name) {
@@ -87,7 +99,7 @@ window.addEventListener("unhandledrejection", (e) => {
 
   /* ------------------------------------------------------------------ tabs */
   const state = { tab: "lookup", lookupRows: [], downloadRows: [], searchRows: [], chemRows: [],
-                  selected: { search: new Set(), chem: new Set() }, mode: "auto", job: null,
+                  selected: { search: new Set(), chem: new Set() }, mode: "auto", job: null, lookupBusy: false, dlBusy: false,
                   baiduDoi: "", editRow: null, myOrcid: "", recentOrcids: [] };
 
   function showTab(name) {
@@ -145,6 +157,10 @@ window.addEventListener("unhandledrejection", (e) => {
     $("statReview").textContent = review;
     $("statDone").textContent = done;
     $("progressBar").style.width = (rows.length ? Math.round(100 * done / rows.length) : 0) + "%";
+    const failed = failedLookupIdx().length;
+    const rb = $("retryLookup");
+    rb.hidden = !failed || state.lookupBusy;
+    rb.textContent = `↻ 重试 ${failed} 个失败的`;
     const has = rows.length > 0;
     ["exportXlsx", "exportMd", "exportHtml", "exportCsv", "exportTxt", "copyDois", "toDownload"]
       .forEach((id) => { $(id).disabled = !has; });
@@ -275,14 +291,65 @@ window.addEventListener("unhandledrejection", (e) => {
     return (2 * hit) / (A.size + B.size);
   }
 
+  // 检索失败（网络/接口出错）或没轮到（被停止）的行；“没找到”是真实结果，不算失败
+  function failedLookupIdx() {
+    const out = [];
+    state.lookupRows.forEach((r, i) => {
+      if (["error", "stopped"].includes(r.status) && String(r.input || r.title || "").trim()) out.push(i);
+    });
+    return out;
+  }
+
+  $("retryLookup").addEventListener("click", async () => {
+    if (state.lookupBusy) return;
+    const idx = failedLookupIdx();
+    if (!idx.length) return toast("没有需要重试的行");
+    const rows = state.lookupRows.slice();
+    const lines = idx.map((i) => String(rows[i].input || rows[i].title).replace(/\s*\n\s*/g, " ").trim());
+    const busy = (on) => {
+      state.lookupBusy = on;
+      $("start").disabled = on; $("stop").disabled = !on; $("titles").disabled = on;
+      $("dot").className = on ? "green-dot busy" : "green-dot";
+    };
+    busy(true);
+    $("runStatus").textContent = `正在重试 ${idx.length} 个失败的…`;
+    const back = (msg) => { busy(false); renderLookup(); $("runStatus").textContent = msg; };
+    try {
+      const job = await api("/api/lookup", {
+        text: lines.join("\n"), mode: state.mode,
+        author: $("author").value.trim(), workers: Number($("workers").value),
+        openalex: $("openalex").checked, dedup: false, mailto: $("email").value.trim(),
+      });
+      pollJob(job.job_id, (d) => {
+        $("runStatus").textContent = `正在重试… ${d.done} / ${d.total}`;
+      }, (d) => {
+        const res = d.results || [];
+        if (res.length !== idx.length) {
+          // 行数对不上就一行都不动，宁可保留原样也不能把结果放错位置
+          const why = d.state === "error" ? d.error : "返回的行数对不上";
+          return back(`重试没有生效：${why}。表格保持原样，可以再点一次重试`);
+        }
+        idx.forEach((i, k) => { state.lookupRows[i] = Object.assign({}, res[k], { n: rows[i].n }); });
+        const still = failedLookupIdx().length;
+        back(d.state === "stopped" ? `已停止，仍有 ${still} 个没完成`
+          : still ? `重试完成，仍有 ${still} 个失败，可以再点一次` : "重试完成，全部查完了");
+      });
+    } catch (e) {
+      feedback("feedback", "重试没有开始：" + e.message, true);
+      back("重试没有开始，表格保持原样");
+    }
+  });
+
   $("start").addEventListener("click", async () => {
     const titles = parseTitles($("titles").value);
     if (!titles.length) { feedback("feedback", "请先输入至少一篇文献标题。", true); $("titles").focus(); return; }
+    state.lookupBusy = true;
     $("start").disabled = true; $("stop").disabled = false; $("titles").disabled = true;
     $("runStatus").textContent = "正在检索…"; $("dot").className = "green-dot busy";
     state.lookupRows = [];
     renderLookup();
     const lookupIdle = () => {
+      state.lookupBusy = false;
       $("start").disabled = false; $("stop").disabled = true; $("titles").disabled = false;
       $("dot").className = "green-dot";
     };
@@ -302,7 +369,9 @@ window.addEventListener("unhandledrejection", (e) => {
         renderLookup();
         $("runStatus").textContent = d.state === "stopped"
           ? `已停止，完成 ${state.lookupRows.length} 篇`
-          : `检索结束 · ${state.lookupRows.length} 篇 · ${d.summary || ""}`;
+          : d.state === "error"
+            ? `检索中断：${d.error || "未知错误"}。输入的标题还在，点「开始批量检索」可以重来`
+            : `检索结束 · ${state.lookupRows.length} 篇 · ${d.summary || ""}`;
       });
     } catch (e) {
       feedback("feedback", "检索失败：" + e.message, true);
@@ -474,6 +543,9 @@ window.addEventListener("unhandledrejection", (e) => {
   function downloadStats() {
     const rows = state.downloadRows;
     const c = (s) => rows.filter((r) => r.status === s).length;
+    const nf = failedDownloadDois().length;
+    $("retryDownload").hidden = !nf || state.dlBusy;
+    $("retryDownload").textContent = `↻ 重试 ${nf} 个失败的`;
     $("dlTotal").textContent = rows.length || parseDois($("dois").value).length;
     $("dlDone").textContent = c("downloaded") + c("exists");
     $("dlNoOa").textContent = c("no_oa");
@@ -548,18 +620,42 @@ window.addEventListener("unhandledrejection", (e) => {
     }
   });
 
-  $("startDownload").addEventListener("click", async () => {
+  // 重试：失败、被停止、没轮到的行；“无开放获取 / 需订阅”是确定的结果，不算失败
+  const DL_RETRY = ["failed", "stopped", "pending"];
+  function failedDownloadDois() {
+    return [...new Set(state.downloadRows.filter((r) => DL_RETRY.includes(r.status) && r.doi)
+      .map((r) => r.doi))];
+  }
+  $("startDownload").addEventListener("click", () => {
     const dois = parseDois($("dois").value);
     if (!dois.length) { feedback("dlFeedback", "请先粘贴至少一个 DOI。", true); return; }
+    runDownload(dois, null);
+  });
+  $("retryDownload").addEventListener("click", () => {
+    if (state.dlBusy) return;
+    const dois = failedDownloadDois();
+    if (!dois.length) return toast("没有需要重试的条目");
+    runDownload(dois, state.downloadRows.slice());
+  });
+
+  // keep 不为空时是“重试”：只重下 dois，结果按 DOI 放回 keep 里原来的位置
+  async function runDownload(dois, keep) {
+    state.dlBusy = true;
+    $("retryDownload").hidden = true;
     $("startDownload").disabled = true; $("stopDownload").disabled = false;
     $("pauseDownload").disabled = false; $("pauseDownload").textContent = "暂停";
     $("dlStatus").textContent = "正在解析开放获取来源…";
     $("dot").className = "green-dot busy";
     // 先把待办行铺出来，别让表格空着：后端要过几秒才吐第一行结果
-    const seed = dois.map((doi) => ({ doi, title: "", status: "pending", file: "", source: "", note: "" }));
+    const redo = new Set(dois.map((d) => d.toLowerCase()));
+    const seed = keep
+      ? keep.map((r) => (redo.has(String(r.doi).toLowerCase())
+        ? Object.assign({}, r, { status: "pending", note: "", file: "" }) : r))
+      : dois.map((doi) => ({ doi, title: "", status: "pending", file: "", source: "", note: "" }));
     state.downloadRows = seed;
     renderDownloads();
     const downloadIdle = () => {
+      state.dlBusy = false;
       $("startDownload").disabled = false; $("stopDownload").disabled = true;
       $("pauseDownload").disabled = true; $("pauseDownload").textContent = "暂停";
       $("dot").className = "green-dot";
@@ -589,16 +685,20 @@ window.addEventListener("unhandledrejection", (e) => {
         $("dlBar").style.width = (d.total ? Math.round(100 * d.done / d.total) : 0) + "%";
       }, (d) => {
         downloadIdle();
-        state.downloadRows = d.state === "error" ? mergeRows(d.results) : (d.results || []);
+        state.downloadRows = keep || d.state === "error" ? mergeRows(d.results) : (d.results || []);
         renderDownloads();
-        $("dlStatus").textContent = d.state === "error" ? "任务失败：" + d.error
-          : `完成 · ${d.summary || ""} · ${d.dest || ""}`;
+        const left = failedDownloadDois().length;
+        $("dlStatus").textContent = d.state === "error"
+          ? `任务中断：${d.error || "未知错误"}。已完成的保留，点「重试」继续剩下的`
+          : `${keep ? "重试完成" : "完成"} · ${d.summary || ""} · ${d.dest || ""}`
+            + (left ? ` · 还有 ${left} 个失败，可以再点重试` : "");
       });
     } catch (e) {
-      feedback("dlFeedback", "下载失败：" + e.message, true);
+      feedback("dlFeedback", "下载没有开始：" + e.message + "（可以直接再点一次）", true);
       downloadIdle();
+      if (keep) { state.downloadRows = keep; renderDownloads(); }
     }
-  });
+  }
   $("exportMissing").addEventListener("click", () => {
     const rows = state.downloadRows.filter((r) => !["downloaded", "exists", "stopped"].includes(r.status));
     if (!rows.length) return toast("没有未获取的条目");
@@ -1108,15 +1208,22 @@ window.addEventListener("unhandledrejection", (e) => {
 
   function pollJob(jobId, onTick, onDone) {
     state.job = jobId;
+    let misses = 0;
     const tick = async () => {
+      let d;
       try {
-        const d = await api(`/api/job/${jobId}`);
-        onTick(d);
-        if (d.state === "running") { setTimeout(tick, 500); return; }
-        onDone(d);
+        d = await api(`/api/job/${jobId}`);
       } catch (e) {
+        // 偶发断线先自动重连几次（后台任务还在跑），连不上再报错
+        misses += 1;
+        if (misses < 6) { setTimeout(tick, 1000 * misses); return; }
         onDone({ state: "error", error: e.message, results: [], done: 0, total: 0 });
+        return;
       }
+      misses = 0;
+      onTick(d);
+      if (d.state === "running") { setTimeout(tick, 500); return; }
+      onDone(d);
     };
     setTimeout(tick, 400);
   }

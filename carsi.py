@@ -11,7 +11,6 @@
 from __future__ import annotations
 
 import os
-import re
 import urllib.parse
 
 import platform_util
@@ -56,7 +55,7 @@ def profile_ready() -> bool:
     """配置目录里有 cookie 文件，粗略判断之前登录过。"""
     if not os.path.isdir(PROFILE_DIR):
         return False
-    for root, _dirs, files in os.walk(PROFILE_DIR):
+    for _root, _dirs, files in os.walk(PROFILE_DIR):
         for f in files:
             if f.lower() in ("cookies", "cookies-journal", "network persistent state"):
                 return True
@@ -83,14 +82,6 @@ def open_login(doi: str, timeout: int = 300) -> dict:
         return {"ok": False, "url": url, "note": f"{type(e).__name__}: {e}"}
     return {"ok": bool(ok), "url": url,
             "note": note or ("浏览器已打开，登录完成后回到软件重新下载" if ok else "打开失败")}
-
-
-def find_pdf_link(html: str) -> str:
-    m = re.search(r'<meta[^>]+name="citation_pdf_url"[^>]+content="([^"]+)"', html or "", re.I)
-    if m:
-        return m.group(1)
-    m = re.search(r'href="([^"]+/pdf[^"]*)"', html or "", re.I)
-    return m.group(1) if m else ""
 
 
 if __name__ == "__main__":

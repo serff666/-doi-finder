@@ -454,35 +454,6 @@ class _PauseGate:
         return total
 
 
-def _parse_glossary(raw: str) -> dict:
-    """术语表：JSON 对象优先；否则按行解析"英文<分隔符>中文"。
-
-    分隔符认制表符、等号、逗号、全角冒号。注释行以 # 开头，跳过。
-    """
-    raw = (raw or "").strip()
-    if not raw:
-        return {}
-    if raw.startswith("{"):
-        try:
-            data = json.loads(raw)
-            return {str(k).strip(): str(v).strip() for k, v in data.items()
-                    if str(k).strip() and str(v).strip()}
-        except Exception:  # noqa: BLE001 - 落到按行解析
-            pass
-    out: dict[str, str] = {}
-    for line in raw.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        for sep in ("\t", "=", ",", "："):
-            if sep in line:
-                k, v = line.split(sep, 1)
-                if k.strip() and v.strip():
-                    out[k.strip()] = v.strip()
-                break
-    return out
-
-
 def run_lab_job(jid: str, url: str, opts: dict) -> None:
     """抓任意课题组 publications 页。用真实浏览器，静态抓只能拿第一屏。"""
     job = JOBS[jid]
@@ -546,25 +517,6 @@ def run_rg_job(jid: str, conf: dict, url: str) -> None:
     except Exception as e:  # noqa: BLE001
         job["error"] = f"{type(e).__name__}: {e}"
         job["state"] = "error"
-
-
-def _pdf_text_from_b64(b64: str) -> str:
-    """把前端传上来的 PDF 转成纯文本。按页抽，页间空一行，段落切分交给下游。"""
-    import base64
-    import io
-
-    from pypdf import PdfReader
-
-    raw = base64.b64decode(b64.split(",", 1)[-1])
-    reader = PdfReader(io.BytesIO(raw))
-    pages = []
-    for p in reader.pages:
-        try:
-            pages.append((p.extract_text() or "").strip())
-        except Exception:  # noqa: BLE001 - 个别页面抽取失败不该毁掉整篇
-            continue
-    text = "\n\n".join(x for x in pages if x)
-    return re.sub(r"[ \t]+", " ", text).strip()
 
 
 def run_download_job(job_id: str, dois: list[str], opts: dict):
