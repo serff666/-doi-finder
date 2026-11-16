@@ -67,7 +67,6 @@ SCI_HUB_LAST_GOOD_YEAR = 2021
 
 def family(doi: str) -> str:
     d = (doi or "").lower()
-    prefix = "/".join(d.split("/")[:1])
     for p, name in PREPRINT.items():
         if d.startswith(p + "/"):
             return "preprint"

@@ -427,7 +427,6 @@ def download_pdfs(items: list[dict], dest: str, progress=None, stop_event=None) 
     """把 items 里的直链 PDF 存到 dest。文件名用标题，冲突时加序号。"""
     import os
     import re as _re
-    import urllib.request
 
     out = []
     for i, it in enumerate(items, 1):

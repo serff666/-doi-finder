@@ -1633,117 +1633,6 @@ window.addEventListener("unhandledrejection", (e) => {
   
 
 
-  // 整刊抓取：一个 ISSN + 年份区间，把该刊这些年发表的全部文献拉进列表
-  const jhRun = document.getElementById("jhRun");
-  if (jhRun) {
-    let lastHarvest = [];
-    jhRun.addEventListener("click", async () => {
-      const issn = state.journalCurrent || "";
-      if (!issn) { toast("先在左侧选一个期刊"); return; }
-      const from = Number(document.getElementById("jhFrom").value || 0);
-      const to = Number(document.getElementById("jhTo").value || 0);
-      jhRun.disabled = true;
-      const st = document.getElementById("jhStatus");
-      if (st) st.textContent = "抓取中…";
-      try {
-        const r = await api("/api/journal/harvest", { issn, year_from: from, year_to: to });
-        pollJob(r.job_id, (d) => {
-          if (st) st.textContent = d.markdown || `已抓 ${d.done}`;
-          if (d.items && d.items.length) {
-            lastHarvest = d.items;
-            state.journalItems = d.items.map((x) => ({ ...x }));
-            state.selected.journal = new Set(state.journalItems.map((_, i) => i));
-            renderJournalItems();
-            const addBtn = document.getElementById("jhAdd");
-            if (addBtn) addBtn.disabled = false;
-          }
-        }, (d) => {
-          jhRun.disabled = false;
-          if (d.state === "error") { toast("抓取失败：" + (d.error || "")); if (st) st.textContent = "失败"; return; }
-          lastHarvest = d.items || [];
-          if (st) st.textContent = `共 ${lastHarvest.length} 条`;
-          const add = document.getElementById("jhAdd");
-          if (add) add.disabled = !lastHarvest.length;
-          state.journalItems = lastHarvest.map((x) => ({ ...x, date: x.date }));
-          state.selected.journal = new Set(lastHarvest.map((_, i) => i));
-          renderJournalItems();
-          toast(`已抓 ${lastHarvest.length} 条，已全选，可点「选中项加入下载」`);
-        });
-      } catch (e) {
-        jhRun.disabled = false;
-        toast("抓取失败：" + e.message);
-      }
-    });
-
-    // 抓取整刊并直接下载：期刊/年份/Volume x, Issue y 分文件夹
-    const jhDownload = document.getElementById("jhDownload");
-    if (jhDownload) {
-      jhDownload.addEventListener("click", () => {
-        const sub = state.journals.find((j) => j.issn === state.journalCurrent);
-        if (!sub) { toast("先在左侧选一个期刊"); return; }
-        const from = Number(document.getElementById("jhFrom").value || 0);
-        const to = Number(document.getElementById("jhTo").value || 0);
-        jhDownload.disabled = true;
-        const st = document.getElementById("jhStatus");
-        if (st) st.textContent = "抓取中…";
-        api("/api/journal/harvest", { issn: sub.issn, year_from: from, year_to: to }).then((r) => {
-          pollJob(r.job_id, (d) => {
-            if (st) st.textContent = d.markdown || `已抓 ${d.done}`;
-          }, (d) => {
-            jhDownload.disabled = false;
-            if (d.state === "error") { toast("抓取失败：" + (d.error || "")); if (st) st.textContent = "失败"; return; }
-            const all = d.items || [];
-            const items = all.filter((x) => x.doi && kindOk(x));
-            if (!items.length) {
-              if (st) st.textContent = all.length
-                ? `抓到 ${all.length} 条，但没有带 DOI 或类型不符`
-                : "抓取完成但没有返回条目";
-              toast(st ? st.textContent : "没有条目");
-              return;
-            }
-            if (st) st.textContent = `共 ${items.length} 篇，开始下载`;
-            $("dois").value = "";
-            addDois(items.map((x) => x.doi));
-            state.pendingLayout = {
-              journal: sub.title,
-              items: items.map((x) => ({ doi: x.doi, year: x.year, volume: x.volume, issue: x.issue })),
-            };
-            showTab("download");
-            $("startDownload").click();
-          });
-        }).catch((e) => { jhDownload.disabled = false; toast("抓取失败：" + e.message); });
-      });
-    }
-
-    const jhClear = document.getElementById("jhClear");
-    if (jhClear) {
-      jhClear.addEventListener("click", () => {
-        lastHarvest = [];
-        state.journalItems = [];
-        state.selected.journal = new Set();
-        const st = document.getElementById("jhStatus");
-        if (st) st.textContent = "已抓 0";
-        const add = document.getElementById("jhAdd");
-        if (add) add.disabled = true;
-        renderJournalItems();
-        toast("已清空抓取结果");
-      });
-    }
-
-    const jhAdd = document.getElementById("jhAdd");
-    if (jhAdd) {
-      jhAdd.addEventListener("click", () => {
-        const rows = (state.journalItems || []).filter(kindOk);
-        if (!rows.length) return;
-        const dois = rows.map((x) => x.doi).filter(Boolean);
-        addDois(dois);
-        toast(`已把 ${dois.length} 个 DOI 加入下载队列`);
-        showTab("download");
-      });
-    }
-  }
-
-
   // ---------------------------------------------------------------- 9. 期刊文库
   // 独立的整刊回溯页：抓书目 → 勾选 → 按 刊名/年份/Volume 卷, Issue 期 下载。
   // 和「② DOI → PDF」分开，是因为这里的数据源、目录结构和进度都自成一套。
@@ -1786,6 +1675,19 @@ window.addEventListener("unhandledrejection", (e) => {
       });
     }
 
+    const KIND_ZH = { review: "综述", research: "研究", "non-research": "其他" };
+    function kindMatches(r) {
+      const sel = (document.getElementById("jdKind") || {}).value || "all";
+      const k = r.kind || "research";
+      if (sel === "research") return k === "research";
+      if (sel === "review") return k === "review";
+      if (sel === "noncorr") return k !== "non-research";
+      return true;
+    }
+    function selectByKind() {
+      st.sel = new Set(st.rows.map((r, i) => (kindMatches(r) ? i : -1)).filter((i) => i >= 0));
+    }
+
     function drawList() {
       const box = document.getElementById("jdList");
       const bar = document.getElementById("jdBar");
@@ -1795,11 +1697,12 @@ window.addEventListener("unhandledrejection", (e) => {
       if (cnt) cnt.textContent = `${st.rows.length} 篇，选中 ${st.sel.size}`;
       box.innerHTML = `<div class="results-scroll"><table class="results-table">
         <thead><tr><th class="checkcell"></th><th style="width:74px">年</th>
-          <th style="width:110px">卷 / 期</th><th>标题</th><th>DOI</th></tr></thead>
+          <th style="width:110px">卷 / 期</th><th style="width:64px">类型</th><th>标题</th><th>DOI</th></tr></thead>
         <tbody>${st.rows.map((r, i) => `<tr>
           <td class="checkcell"><input type="checkbox" data-jdsel="${i}" ${st.sel.has(i) ? "checked" : ""}></td>
           <td>${esc(r.year || "")}</td>
           <td class="aux">${esc((r.volume ? "V" + r.volume : "") + (r.issue ? " I" + r.issue : ""))}</td>
+          <td class="aux">${esc(KIND_ZH[r.kind] || "")}</td>
           <td><div class="rowtitle">${esc((r.title || "").slice(0, 120))}</div></td>
           <td><a class="doi-link" href="https://doi.org/${esc(r.doi)}" target="_blank" rel="noopener noreferrer">${esc(r.doi)}</a></td>
         </tr>`).join("")}</tbody></table></div>`;
@@ -1829,21 +1732,22 @@ window.addEventListener("unhandledrejection", (e) => {
           setFb(d.markdown || `已抓 ${d.done} 条`);
           if (d.items && d.items.length) {
             st.rows = d.items.filter((x) => x.doi);
-            st.sel = new Set(st.rows.map((_, i) => i));
+            selectByKind();
             drawList();
           }
         }, (d) => {
           run.disabled = false;
           if (d.state === "error") { setFb("抓取失败：" + (d.error || ""), true); return; }
           st.rows = d.items || [];
-          st.sel = new Set(st.rows.map((_, i) => i));
+          selectByKind();
           drawList();
           const errs = (d.errors || []).length;
-          setFb(`共 ${st.rows.length} 篇${errs ? `，${errs} 次请求失败` : ""}，默认已全选`);
+          setFb(`共 ${st.rows.length} 篇，已按类型勾选 ${st.sel.size} 篇${errs ? `，${errs} 次请求失败` : ""}`);
         });
       }).catch((e) => { run.disabled = false; setFb("抓取失败：" + e.message, true); });
     });
 
+    document.getElementById("jdKind").addEventListener("change", () => { selectByKind(); drawList(); });
     document.getElementById("jdAll").addEventListener("click", () => {
       st.sel = new Set(st.rows.map((_, i) => i)); drawList();
     });
@@ -1862,7 +1766,7 @@ window.addEventListener("unhandledrejection", (e) => {
       if (!picked.length) { setFb("没有选中条目", true); return; }
       const raw = (document.getElementById("jdIssn").value || "").trim();
       const known = state.journals.find((j) => j.issn === issnOf());
-      const journal = known ? known.title : raw;
+      const journal = known ? known.title : ((st.rows[0] && st.rows[0].journal) || raw);
       const dest = ($("dlDir") && $("dlDir").value.trim()) || "";
       const btn = document.getElementById("jdDownload");
       btn.disabled = true;

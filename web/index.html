@@ -502,6 +502,13 @@ https://doi.org/10.1073/pnas.2321668121"></textarea>
           <input id="jdFrom" placeholder="2011" inputmode="numeric" style="width:100px"></div>
         <div class="set-field"><label for="jdTo">截止年</label>
           <input id="jdTo" placeholder="2026" inputmode="numeric" style="width:100px"></div>
+        <div class="set-field"><label for="jdKind">类型（决定默认勾选）</label>
+          <select id="jdKind">
+            <option value="all">全部</option>
+            <option value="research">仅研究论文</option>
+            <option value="review">仅综述</option>
+            <option value="noncorr" selected>排除更正/社论/目录</option>
+          </select></div>
         <datalist id="jdSuggest"></datalist>
         <button class="btn primary" id="jdRun" type="button">抓取书目</button>
         <button class="btn" id="jdClear" type="button">清空</button>

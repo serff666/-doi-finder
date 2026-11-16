@@ -14,7 +14,6 @@ import json
 import mimetypes
 import os
 import re
-import shutil
 import socket
 import subprocess
 import sys
@@ -169,10 +168,7 @@ def load_last(kind: str) -> dict:
 
 def _pdf_year(path: str) -> str:
     """从 PDF 首页文字里找出版年份。找不到返回空串。"""
-    try:
-        text = _pdf_title_text(path) if "_pdf_title_text" in globals() else ""
-    except Exception:  # noqa: BLE001
-        text = ""
+    text = ""
     if not text:
         try:
             import pypdf

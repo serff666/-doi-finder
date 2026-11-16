@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import os
 import re
-import time
 import urllib.parse
 
 import platform_util
@@ -32,9 +31,7 @@ PUBLISHER_HOME = {
     "10.1109": "https://ieeexplore.ieee.org",
     "10.1145": "https://dl.acm.org",
     "10.1088": "https://iopscience.iop.org",
-    "10.1021": "https://pubs.acs.org",
     "10.1039": "https://pubs.rsc.org",
-    "10.1002": "https://onlinelibrary.wiley.com",
     "10.1016/j": "https://www.sciencedirect.com",
 }
 
@@ -42,7 +39,6 @@ CARSI_PORTAL = "https://www.carsi.edu.cn/"
 
 
 def publisher_of(doi: str) -> str:
-    prefix = "/".join((doi or "").split("/")[:1])
     for k, v in PUBLISHER_HOME.items():
         if (doi or "").startswith(k):
             return v

@@ -47,7 +47,7 @@ def link(doi: str) -> str:
 # ----------------------------------------------------------------------------- markdown
 def to_markdown(rows: list[dict]) -> str:
     rows = _rows(rows)
-    out = [f"# DOI lookup result", "", f"_{summary(rows)} — generated {datetime.now():%Y-%m-%d %H:%M}_", ""]
+    out = ["# DOI lookup result", "", f"_{summary(rows)} — generated {datetime.now():%Y-%m-%d %H:%M}_", ""]
     out.append("| # | Title | DOI | Status | Journal | Year |")
     out.append("|---:|---|---|---|---|---:|")
     for r in rows:

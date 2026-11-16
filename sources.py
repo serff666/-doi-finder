@@ -127,7 +127,6 @@ def europepmc_repo_file(doi: str) -> tuple[bytes | None, str]:
     这条不是官方 REST API，是它自己阅读器用的内部接口，但确实能返回订阅刊全文的
     PDF/XML（很多期刊按公共获取政策存了稿）。拿不到就返回空，不重试、不纠缠。
     """
-    import json as _json
 
     pmcid = _epmc_pmcid(doi)
     if not pmcid:
@@ -166,7 +165,6 @@ def europepmc_fulltext_xml(doi: str) -> bytes | None:
     很多订阅期刊按公共获取政策把全文存进了 PMC，PDF 不让下，但 XML 全文可以拿。
     没有 PDF 不等于没有全文，这份 XML 就是正文本身。
     """
-    import json as _json
     import urllib.parse as _up
     import urllib.request as _rq
 
@@ -502,7 +500,7 @@ def arxiv_by_title(title: str, doi: str = "", min_similarity: float = 0.90) -> l
         if not want and t:
             sim = difflib.SequenceMatcher(None, q.lower(), t.lower()).ratio()
             if sim >= min_similarity:
-                out.append({"source": f"arXiv（标题一致）",
+                out.append({"source": "arXiv（标题一致）",
                             "url": f"https://arxiv.org/pdf/{aid}"})
     return out[:2]
 

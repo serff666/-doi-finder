@@ -91,3 +91,9 @@ def test_api_jobs_answers_get():
         assert "ok" in data
     finally:
         httpd.shutdown()
+
+
+def test_journal_tab_has_type_filter():
+    html = open(os.path.join(ROOT, "web", "index.html"), encoding="utf-8").read()
+    js = open(os.path.join(ROOT, "web", "app.js"), encoding="utf-8").read()
+    assert 'id="jdKind"' in html and "selectByKind" in js
