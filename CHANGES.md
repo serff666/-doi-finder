@@ -5,7 +5,7 @@
 **English interface and file pickers**
 - The English UI no longer leaves Chinese behind: a dictionary plus sentence rules (`web/i18n.en.js`) cover static text, tables, status lines, placeholders, titles and the page title; runtime text is translated by a MutationObserver, and the language can be switched back and forth without reloading. Text composed in JS (confirm dialogs, path preview, default folder names) follows the UI language.
 - Pause/resume no longer reads the button's label (it broke in English); it uses a state flag.
-- File / folder pickers: tkinter only, on every platform, no fallback (the PowerShell dialog returned an empty answer without showing anything on some machines). The hidden root window is made top-most, lifted and updated before the dialog opens, so it is not covered by the browser; folders must exist; one dialog at a time; a failure is reported, not swallowed.
+- File / folder pickers: tkinter only, on every platform, no fallback (the PowerShell dialog returned an empty answer without showing anything on some machines). The owner window is a 1x1 transparent top-most window that is given the foreground (Alt tap + `SetForegroundWindow`) before the dialog opens: measured on a real machine the dialog was top-most but had no focus; folders must exist; one dialog at a time; a failure is reported, not swallowed.
 - Tests: `tests/web_i18n_check.py` (real English DOM crawl of every page and running state, plus zh↔en round trip) and `tests/i18n_audit.py` (every Chinese string in the web code must have an English form); both run in CI. Server-side messages and exported file names/CSV headers stay Chinese.
 
 **Downloads**
