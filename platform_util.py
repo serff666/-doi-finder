@@ -104,9 +104,21 @@ $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 Add-Type -AssemblyName System.Windows.Forms
 [System.Windows.Forms.Application]::EnableVisualStyles()
+# Windows refuses to let a background process take the foreground, so a dialog opened by a child
+# process can end up behind the browser.  Fix: give the dialog a visible-to-the-system, top-most
+# owner window and bring it to the front explicitly (an Alt key tap lifts the foreground lock).
+Add-Type -Namespace DF -Name Win -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool SetForegroundWindow(System.IntPtr h);
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool ShowWindow(System.IntPtr h, int cmd);
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, int flags, System.UIntPtr extra);
+'@
 $owner = New-Object System.Windows.Forms.Form
 $owner.TopMost = $true; $owner.ShowInTaskbar = $false; $owner.Opacity = 0
+$owner.FormBorderStyle = 'None'; $owner.Size = New-Object System.Drawing.Size(1, 1)
 $owner.StartPosition = 'CenterScreen'; $owner.Show()
+[DF.Win]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero); [DF.Win]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
+[void][DF.Win]::ShowWindow($owner.Handle, 9); [void][DF.Win]::SetForegroundWindow($owner.Handle)
+$owner.Activate(); $owner.Focus() | Out-Null
 if ($env:DF_KIND -eq 'folder') {
   $d = New-Object System.Windows.Forms.FolderBrowserDialog
   $d.Description = $env:DF_TITLE
@@ -140,6 +152,10 @@ def _tk_pick(kind: str, title: str, initial: str = "", patterns: tuple = (), mul
     root = tk.Tk()
     root.withdraw()
     root.attributes("-topmost", True)
+    try:
+        root.update(); root.lift(); root.focus_force()   # keep the dialog in front of the browser
+    except Exception:
+        pass
     try:
         if kind == "folder":
             got = filedialog.askdirectory(title=title, initialdir=initial or None)

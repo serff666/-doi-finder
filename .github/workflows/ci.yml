@@ -17,3 +17,5 @@ jobs:
       - run: pytest -q
       - run: python tests/e2e_journal.py
       - run: python tests/web_retry_check.py
+      - run: python tests/web_i18n_check.py
+      - run: python tests/i18n_audit.py
