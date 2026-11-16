@@ -332,3 +332,8 @@ tr.editing > td { background: #eef3ff; }
 .run-btns { display: inline-flex; gap: 8px; flex-wrap: wrap; }
 .run-panel .progress { height: 8px; border-radius: 4px; margin-bottom: 6px; }
 .run-panel .aux { margin-top: 2px; }
+
+/* 预印本页：每条输入一组候选 */
+.pp-row { border: 1px solid #e6eaf3; border-radius: 12px; padding: 10px 14px; margin: 10px 0; background: #fff; }
+.pp-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.pp-row .results-table { margin: 0; }

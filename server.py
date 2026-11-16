@@ -34,9 +34,10 @@ import journalinfo
 import journals
 import netpolicy
 import platform_util
+import preprints
 import scihub
 import sources
-from doi_engine import Cache, lookup_all, parse_entries
+from doi_engine import Cache, Http, lookup_all, parse_entries
 from exporters import EXPORTERS, summary
 
 FROZEN = bool(getattr(sys, "frozen", False))
@@ -417,6 +418,90 @@ def run_lookup_job(job_id: str, entries: list[dict], opts: dict):
         job["state"] = "error"
         job["error"] = f"{type(e).__name__}: {e}"
         log(f"lookup job {job_id} failed: {e}")
+
+
+def preprint_one(entry: dict, http, email: str = "") -> dict:
+    """Preprint candidates for one input line (a title, a citation, or a journal DOI)."""
+    title = (entry.get("title") or "").strip()
+    doi = preprints.norm_doi(entry.get("doi"))
+    first_author, year = "", None
+    as_doi = preprints.norm_doi(title)
+    if re.match(r"^10\.\d{4,9}/\S+$", as_doi):          # the line was only a DOI: the title comes from its record
+        doi, title = doi or as_doi, ""
+    row = {"n": entry.get("n"), "input": entry.get("input") or title or doi, "doi": doi, "title": title,
+           "first_author": "", "year": "", "status": "none", "candidates": [], "auto": "",
+           "notes": [], "error": ""}
+    if doi and not preprints.is_chemrxiv(doi):
+        try:
+            meta = sources.work_meta(doi, email) or {}
+        except Exception as e:  # noqa: BLE001
+            meta = {}
+            row["notes"].append(f"期刊记录没取到：{type(e).__name__}")
+        title = title or meta.get("title") or ""
+        first_author = meta.get("first_author") or ""
+        year = meta.get("year") or None
+        row["title"] = title
+    if not title and not doi:
+        row.update({"status": "error", "error": "没有可查的标题或 DOI"})
+        return row
+    if not title:
+        row.update({"status": "error", "error": "查不到这个 DOI 的标题，没法找预印本；可以直接粘贴标题再试"})
+        return row
+    row["first_author"], row["year"] = first_author, str(year or "")
+    found = preprints.find(title, doi=doi, first_author=first_author, year=year, http=http)
+    row["notes"] += found["notes"]
+    for c in found["candidates"]:
+        if c.get("pdf_url"):
+            downloader.register_pdf_hint(c["doi"], c["pdf_url"])
+    pick = preprints.best_auto(found)
+    row["candidates"] = found["candidates"]
+    row["auto"] = pick["doi"] if pick else ""
+    if found["error"]:
+        row.update({"status": "error", "error": found["error"]})
+    else:
+        row["status"] = "found" if found["candidates"] else "none"
+    return row
+
+
+def run_preprint_job(jid: str, entries: list[dict], opts: dict) -> None:
+    job = JOBS[jid]
+    email = opts.get("email") or load_settings()["email"]
+    http = Http(email)
+    out: list[dict | None] = [None] * len(entries)
+    lock = threading.Lock()
+
+    def one(i: int) -> None:
+        e = entries[i]
+        if job["cancel"].is_set():
+            out[i] = {"n": e.get("n"), "input": e.get("input") or e.get("title"), "doi": e.get("doi") or "",
+                      "title": e.get("title") or "", "status": "stopped", "candidates": [], "auto": "",
+                      "notes": [], "error": "", "first_author": "", "year": ""}
+            return
+        try:
+            out[i] = preprint_one(e, http, email)
+        except Exception as ex:  # noqa: BLE001
+            out[i] = {"n": e.get("n"), "input": e.get("input") or e.get("title"), "doi": e.get("doi") or "",
+                      "title": e.get("title") or "", "status": "error", "candidates": [], "auto": "",
+                      "notes": [], "error": f"{type(ex).__name__}: {ex}", "first_author": "", "year": ""}
+        with lock:
+            job["done"] += 1
+
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            list(pool.map(one, range(len(entries))))
+        results = [r for r in out if r]
+        counts: dict[str, int] = {}
+        for r in results:
+            counts[r["status"]] = counts.get(r["status"], 0) + 1
+        job["results"] = results
+        job["summary"] = " · ".join(f"{k} {v}" for k, v in counts.items())
+        job["state"] = "stopped" if job["cancel"].is_set() else "done"
+        log(f"preprint job {jid}: {len(results)} inputs -> {job['summary']}")
+    except Exception as e:  # noqa: BLE001
+        job["state"] = "error"
+        job["error"] = f"{type(e).__name__}: {e}"
+        log(f"preprint job {jid} failed: {e}")
 
 
 def _carsi_open(doi: str) -> dict:
@@ -1086,6 +1171,20 @@ class Handler(BaseHTTPRequestHandler):
                          "done": 0, "total": len(entries), "results": [],
                          "cancel": threading.Event()}
             threading.Thread(target=run_lookup_job, args=(jid, entries, body), daemon=True).start()
+            return self._json({"job_id": jid, "total": len(entries)})
+
+        if p == "/api/preprint/find":
+            entries = parse_entries(body.get("text", ""), "auto")
+            if not entries:
+                return self._json({"error": "没有找到标题或 DOI"}, 400)
+            if len(entries) > 500:
+                return self._json({"error": "单次最多 500 条，请分批"}, 400)
+            _cleanup_jobs()
+            jid = uuid.uuid4().hex[:12]
+            JOBS[jid] = {"created": time.time(), "state": "running", "kind": "preprint",
+                         "done": 0, "total": len(entries), "results": [],
+                         "cancel": threading.Event()}
+            threading.Thread(target=run_preprint_job, args=(jid, entries, body), daemon=True).start()
             return self._json({"job_id": jid, "total": len(entries)})
 
         if p.startswith("/api/pause/"):
