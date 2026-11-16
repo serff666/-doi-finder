@@ -76,7 +76,7 @@ Every page files the same way: `workspace / collection / sub / file.pdf`, e.g. `
 | ① Title → DOI | a list of titles or full citations | one DOI per line with confidence and evidence; exportable |
 | ② DOI → PDF | a list of DOIs | local PDFs, normalised filenames, resumable |
 | ③ Topic search | keywords, author, ORCID, years | matching papers; download on the same page |
-| ④ ChemASAP | none | latest ASAP articles in organic chemistry |
+| ④ ChemASAP | none | latest ASAP articles across chemistry (not only organic; ChemRxiv preprints included) |
 | ⑤ Journal feed | journal name or ISSN | recent articles, unread marked |
 | ⑥ ResearchGate | an author profile URL | that author's publication list |
 | ⑦ Archive | a local PDF | renamed and filed into your library |
