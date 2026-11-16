@@ -152,6 +152,16 @@ DRIVER = r"""
     ok("finish banner counts the failure", /还有 1 篇没成功/.test($("jdRunTitle").textContent), $("jdRunTitle").textContent);
     ok("panel turns red when something failed", $("jdPanel").classList.contains("bad") && !$("jdPanel").classList.contains("done"));
     ok("final counts", /成功 1/.test($("jdProg").textContent) && /失败 1/.test($("jdProg").textContent) && /已处理 3 \/ 3/.test($("jdProg").textContent), $("jdProg").textContent);
+    ok("detail defaults to unfetched only", /10\.1000\/j2/.test($("jdResults").textContent) && /10\.1000\/j3/.test($("jdResults").textContent) && !/10\.1000\/j1/.test($("jdResults").textContent), $("jdResults").textContent);
+    ok("detail summary counts", /未获取 2 \/ 共 3/.test($("jdResSum").textContent), $("jdResSum").textContent);
+    window.__blobs = []; const _cb = URL.createObjectURL; URL.createObjectURL = (b) => { window.__blobs.push(b); return _cb.call(URL, b); };
+    $("jdExport").click();
+    await until(() => window.__blobs.length, "export blob");
+    const csv = await window.__blobs[0].text();
+    ok("export lists only unfetched with header", /DOI,标题,状态/.test(csv) && /10\.1000\/j2/.test(csv) && /10\.1000\/j3/.test(csv) && !/10\.1000\/j1/.test(csv), csv);
+    $("jdOnlyBad").click();
+    ok("unticking shows everything", /10\.1000\/j1/.test($("jdResults").textContent));
+    $("jdOnlyBad").click();
     ok("buttons reset, retry offered for 1", $("jdPause").hidden && $("jdStop").hidden && !$("jdRetry").hidden && $("jdRetry").textContent.includes("1") && !$("jdDownload").disabled, $("jdRetry").textContent);
     $("jdRetry").click();
     await until(() => /下载完成/.test($("jdRunTitle").textContent), "retry done");
@@ -174,9 +184,24 @@ DRIVER = r"""
     document.querySelector('[data-tab="lookup"]').click();
     await until(() => !$("toDownload").disabled, "toDownload enabled");
     const tabBefore = document.querySelector("[data-tab].active, [data-tab][aria-selected='true']");
+    ok("every page has its own settings before any download", !!$("lkDir") && !!$("ppDir") && !!$("jdDir") && !!$("sr" + "Dir"));
+    ok("channels default from the global ones", $("lkSci").checked === $("scihubEnable").checked && $("lkInst").checked === $("instEnable").checked);
+    $("lkDir").value = "/tmp/lk"; $("lkDir").dispatchEvent(new Event("change"));
+    $("lkSci").checked = false; $("lkSci").dispatchEvent(new Event("change"));
+    $("lkInst").checked = true; $("lkInst").dispatchEvent(new Event("change"));
+    $("lkWorkers").value = "5"; $("lkWorkers").dispatchEvent(new Event("change"));
+    ok("other pages untouched by lk settings", $("ppDir").value === "" && $("ppSci").checked === $("scihubEnable").checked && $("ppInst").checked === $("instEnable").checked && $("ppWorkers").value === $("dlWorkers").value);
+    $("scihubEnable").checked = false; $("instEnable").checked = !$("instEnable").checked;
+    document.dispatchEvent(new Event("doifinder:settings"));
+    ok("untouched pages follow a changed default, touched ones do not", $("ppSci").checked === false && $("ppInst").checked === $("instEnable").checked && $("lkSci").checked === false && $("lkInst").checked === true && $("lkDir").value === "/tmp/lk");
+    $("scihubEnable").checked = true; $("instEnable").checked = !$("instEnable").checked;
+    document.dispatchEvent(new Event("doifinder:settings"));
+    ok("default restored", $("ppSci").checked === true);
     $("toDownload").click();
     await until(() => !!$("lkPanel") && /下载完成/.test($("lkRunTitle").textContent), "in-page download");
     ok("lookup download stays on the lookup page", document.getElementById("tab-lookup") && !document.getElementById("tab-lookup").hidden && document.getElementById("tab-download").hidden);
+    const lkBody = window.__log.filter((c) => c[0] === "/api/download").slice(-1)[0][1];
+    ok("lookup download uses its own folder and channels", lkBody.dir === "/tmp/lk" && lkBody.scihub === false && lkBody.inst === true && lkBody.workers === 5, JSON.stringify(lkBody));
     ok("in-page download sent the matched DOIs", window.__log.filter((c) => c[0] === "/api/download").slice(-1)[0][1].dois.includes("10.1000/alpha"), JSON.stringify(window.__log.filter((c) => c[0] === "/api/download").slice(-1)));
 
     // ---- preprint page
@@ -206,10 +231,15 @@ DRIVER = r"""
     ok("none clears and disables download", $("ppDownload").disabled);
     $("ppPickGood").click();
     document.querySelector('[data-pp="10.26434/chemrxiv-2"]').click();
+    $("dlDir").value = "/global";
     $("ppDownload").click();
     await until(() => /下载完成/.test($("ppRunTitle").textContent), "preprint download");
     const pc = window.__log.filter((c) => c[0] === "/api/download").slice(-1)[0][1];
     ok("preprint download sends the selected preprint DOIs", JSON.stringify(pc.dois.slice().sort()) === '["10.26434/chemrxiv-1","10.26434/chemrxiv-2","10.26434/chemrxiv-3"]', JSON.stringify(pc.dois));
+    ok("untouched folder falls back to the default one, channels stay default", pc.dir === "/global" && pc.scihub === $("scihubEnable").checked && pc.inst === $("instEnable").checked, JSON.stringify(pc));
+    ok("pp panel all fetched says so", /全部已获取/.test($("ppResults").textContent), $("ppResults").textContent);
+    ok("lk settings kept independently", $("lkDir").value === "/tmp/lk" && $("lkSci").checked === false);
+    $("ppDir").value = "/tmp/pp"; $("ppDir").dispatchEvent(new Event("change"));
     ok("preprint page stays put", !document.getElementById("tab-preprint").hidden);
 
     // ---- from the DOI -> PDF page: unfetched DOIs go to the preprint page, which only fills the box
