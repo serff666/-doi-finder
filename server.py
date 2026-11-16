@@ -124,6 +124,7 @@ DEFAULT_SETTINGS = {
     "wiley_token": "",
     "journal_subs": [],
     "inst_first": False,
+    "preprint_early": True,
     "browser": "auto",       # 'auto' | 'chrome' | 'edge' —— 驱动哪个浏览器
     "archive_file_template": "{first_author}_{year}_{title}",
     "archive_folder_template": "{year}",
@@ -346,6 +347,8 @@ def inst_conf(opts: dict) -> dict:
             "login_url": (opts.get("login_url") if isinstance(opts.get("login_url"), str)
                           else s.get("inst_login_url")) or "",
             "first": bool(s.get("inst_first")),
+            "preprint_early": (opts.get("preprint_early") if isinstance(opts.get("preprint_early"), bool)
+                               else s.get("preprint_early") is not False),
             "timeout": float(s.get("inst_timeout") or 75),
             "elsevier_key": str(s.get("elsevier_key") or "").strip(),
             "elsevier_token": str(s.get("elsevier_token") or "").strip(),

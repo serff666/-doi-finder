@@ -207,7 +207,7 @@ DRIVER = r"""
     ok("it opens that page's own folder", window.__log.filter((c) => c[0] === "/api/open-folder").slice(-1)[0][1].path === "/tmp/lk");
     ok("lookup download stays on the lookup page", document.getElementById("tab-lookup") && !document.getElementById("tab-lookup").hidden && document.getElementById("tab-download").hidden);
     const lkBody = window.__log.filter((c) => c[0] === "/api/download").slice(-1)[0][1];
-    ok("lookup download uses its own folder and channels", lkBody.dir === "/tmp/lk" && lkBody.scihub === false && lkBody.inst === true && lkBody.workers === 5, JSON.stringify(lkBody));
+    ok("lookup download uses its own folder and channels", lkBody.dir === "/tmp/lk" && lkBody.scihub === false && lkBody.inst === true && lkBody.workers === 5 && lkBody.preprint_early === true, JSON.stringify(lkBody));
     ok("in-page download sent the matched DOIs", window.__log.filter((c) => c[0] === "/api/download").slice(-1)[0][1].dois.includes("10.1000/alpha"), JSON.stringify(window.__log.filter((c) => c[0] === "/api/download").slice(-1)));
 
     // ---- preprint page
