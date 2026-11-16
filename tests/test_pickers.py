@@ -1,82 +1,86 @@
-"""File / folder pickers: Windows only, through PowerShell; no fallback of any kind."""
+"""File / folder pickers: tkinter only, one path, no fallback."""
 import os
-import subprocess
+import re
+import sys
+import types
+
+import pytest
 
 import platform_util as pu
 
 
-class _Done:
-    def __init__(self, out=b"", code=0, err=b""):
-        self.stdout, self.returncode, self.stderr = out, code, err
+class _FakeTk:
+    log = []
+
+    def __init__(self):
+        _FakeTk.log.append("Tk")
+
+    def withdraw(self): _FakeTk.log.append("withdraw")
+    def attributes(self, *a): _FakeTk.log.append(("attributes",) + a)
+    def lift(self): _FakeTk.log.append("lift")
+    def update(self): _FakeTk.log.append("update")
+    def destroy(self): _FakeTk.log.append("destroy")
 
 
-def _fake_run(monkeypatch, result, seen):
-    def run(cmd, **kw):
-        seen.update(cmd=cmd, **kw)
-        if isinstance(result, Exception):
-            raise result
-        return result
-    monkeypatch.setattr(subprocess, "run", run)
-
-
-def test_windows_folder_uses_sta_powershell_and_utf8(monkeypatch):
-    monkeypatch.setattr(pu, "IS_WIN", True)
+def _install(monkeypatch, **answers):
+    _FakeTk.log = []
+    tk = types.ModuleType("tkinter")
+    tk.Tk = _FakeTk
+    fd = types.ModuleType("tkinter.filedialog")
     seen = {}
-    _fake_run(monkeypatch, _Done("D:\\文献\\张\r\n".encode("utf-8")), seen)
-    assert pu.pick_folder("选择", "D:\\文献") == "D:\\文献\\张"
-    assert seen["cmd"][:2] == ["powershell", "-STA"]
-    assert seen["env"]["DF_KIND"] == "folder" and seen["env"]["DF_INITIAL"] == "D:\\文献"
-    assert seen["timeout"] >= 600                      # waits for the person, no short timeout
+
+    def mk(name):
+        def f(**kw):
+            seen[name] = kw
+            _FakeTk.log.append(name)
+            a = answers.get(name, "")
+            if isinstance(a, Exception):
+                raise a
+            return a
+        return f
+    for n in ("askdirectory", "askopenfilename", "askopenfilenames"):
+        setattr(fd, n, mk(n))
+    tk.filedialog = fd
+    monkeypatch.setitem(sys.modules, "tkinter", tk)
+    monkeypatch.setitem(sys.modules, "tkinter.filedialog", fd)
+    return seen
 
 
-def test_windows_cancel_returns_empty(monkeypatch):
-    monkeypatch.setattr(pu, "IS_WIN", True)
-    _fake_run(monkeypatch, _Done(b""), {})
-    assert pu.pick_folder("x") == ""
-    assert pu.pick_files("x", (("PDF", "*.pdf"),), multi=True) == []
+def test_folder_dialog_is_raised_before_it_opens(monkeypatch):
+    seen = _install(monkeypatch, askdirectory="D:\\papers")
+    assert pu.pick_folder("t", "C:\\x") == "D:\\papers"
+    log = _FakeTk.log
+    assert log.index(("attributes", "-topmost", True)) < log.index("askdirectory")
+    assert log.index("lift") < log.index("askdirectory") and log.index("update") < log.index("askdirectory")
+    assert log[-1] == "destroy"
+    assert seen["askdirectory"]["mustexist"] is True and seen["askdirectory"]["initialdir"] == "C:\\x"
 
 
-def test_windows_files_filter_and_multiselect(monkeypatch):
-    monkeypatch.setattr(pu, "IS_WIN", True)
-    seen = {}
-    _fake_run(monkeypatch, _Done("C:\\a.pdf\r\nC:\\b.pdf\r\n".encode()), seen)
-    assert pu.pick_files("t", (("PDF", "*.pdf"),), multi=True) == ["C:\\a.pdf", "C:\\b.pdf"]
-    assert seen["env"]["DF_FILTER"] == "PDF|*.pdf|所有文件|*.*" and seen["env"]["DF_MULTI"] == "1"
+def test_cancel_returns_empty(monkeypatch):
+    _install(monkeypatch, askdirectory="", askopenfilenames=())
+    assert pu.pick_folder("t") == "" and pu.pick_files("t", multi=True) == []
 
 
-def test_windows_failure_is_an_error_not_a_second_dialog(monkeypatch):
-    import pytest
-    monkeypatch.setattr(pu, "IS_WIN", True)
-    _fake_run(monkeypatch, _Done(b"", 1, b"boom"), {})
-    with pytest.raises(Exception):
-        pu.pick_folder("x")
-    _fake_run(monkeypatch, FileNotFoundError("no powershell"), {})
-    with pytest.raises(Exception):
-        pu.pick_files("x", (("PDF", "*.pdf"),))
+def test_files_patterns_and_multi(monkeypatch):
+    seen = _install(monkeypatch, askopenfilenames=("a.pdf", "b.pdf"), askopenfilename="c.pdf")
+    assert pu.pick_files("t", (("PDF", "*.pdf;*.PDF"),), multi=True) == ["a.pdf", "b.pdf"]
+    assert seen["askopenfilenames"]["filetypes"][0] == ("PDF", "*.pdf *.PDF")
+    assert pu.pick_files("t", (("PDF", "*.pdf"),)) == ["c.pdf"]
 
 
-def test_non_windows_has_no_dialog(monkeypatch):
-    import pytest
-    monkeypatch.setattr(pu, "IS_WIN", False)
-    _fake_run(monkeypatch, RuntimeError("PowerShell must not run"), {})
+def test_failure_raises_and_window_is_destroyed(monkeypatch):
+    _install(monkeypatch, askdirectory=RuntimeError("no display"))
     with pytest.raises(RuntimeError):
-        pu.pick_folder("x")
-    with pytest.raises(RuntimeError):
-        pu.pick_files("x")
+        pu.pick_folder("t")
+    assert _FakeTk.log[-1] == "destroy"
 
 
-def test_no_tk_anywhere():
-    src = open(os.path.join(os.path.dirname(pu.__file__), "platform_util.py"), encoding="utf-8").read()
-    assert "tkinter" not in src and "_tk_pick" not in src
+def test_no_second_implementation():
+    src = open(pu.__file__, encoding="utf-8").read()
+    assert "_PS_PICK" not in src and "_powershell_pick" not in src
 
 
-def test_server_pickers_have_no_tk_left():
-    import re
-    src = open("server.py", encoding="utf-8").read()
+def test_server_uses_platform_util_only():
+    src = open(os.path.join(os.path.dirname(pu.__file__), "server.py"), encoding="utf-8").read()
     assert not re.search(r"import tkinter|filedialog", src)
-
-
-def test_windows_script_brings_dialog_to_front():
-    src = pu._PS_PICK
-    assert "SetForegroundWindow" in src and "TopMost = $true" in src and "keybd_event" in src
-    assert src.count("@'") == src.count("'@") == 1
+    assert src.count("platform_util.pick_folder") == 1

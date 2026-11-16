@@ -94,72 +94,44 @@ def curl_bin() -> str:
 
 
 # ---- file / folder pickers -------------------------------------------------------------
-# The server answers from an HTTP worker thread, where a Tk window is unreliable (the dialog may
-# never appear). So the system dialogs are opened through PowerShell on its own STA thread. That is
-# the only path: Windows only, no fallback. Cancelling returns "" / []; any failure raises.
+# One implementation, tkinter, on every platform; no fallback. It is the path that is known to open
+# on the target machines (the PowerShell dialog returned an empty answer without showing anything).
+# The invisible root window is made top-most, lifted and updated *before* the dialog is shown,
+# otherwise the dialog can open behind the browser. One dialog at a time. Cancel -> "" / [];
+# any failure raises, and the server reports it.
+import threading  # noqa: E402
 
-_PS_PICK = r"""
-$ErrorActionPreference = 'Stop'
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-Add-Type -AssemblyName System.Windows.Forms
-[System.Windows.Forms.Application]::EnableVisualStyles()
-# Windows refuses to let a background process take the foreground, so a dialog opened by a child
-# process can end up behind the browser.  Fix: give the dialog a visible-to-the-system, top-most
-# owner window and bring it to the front explicitly (an Alt key tap lifts the foreground lock).
-Add-Type -Namespace DF -Name Win -MemberDefinition @'
-[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool SetForegroundWindow(System.IntPtr h);
-[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool ShowWindow(System.IntPtr h, int cmd);
-[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, int flags, System.UIntPtr extra);
-'@
-$owner = New-Object System.Windows.Forms.Form
-$owner.TopMost = $true; $owner.ShowInTaskbar = $false; $owner.Opacity = 0
-$owner.FormBorderStyle = 'None'; $owner.Size = New-Object System.Drawing.Size(1, 1)
-$owner.StartPosition = 'CenterScreen'; $owner.Show()
-[DF.Win]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero); [DF.Win]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
-[void][DF.Win]::ShowWindow($owner.Handle, 9); [void][DF.Win]::SetForegroundWindow($owner.Handle)
-$owner.Activate(); $owner.Focus() | Out-Null
-if ($env:DF_KIND -eq 'folder') {
-  $d = New-Object System.Windows.Forms.FolderBrowserDialog
-  $d.Description = $env:DF_TITLE
-  if ($env:DF_INITIAL -and (Test-Path -LiteralPath $env:DF_INITIAL)) { $d.SelectedPath = $env:DF_INITIAL }
-  if ($d.ShowDialog($owner) -eq 'OK') { Write-Output $d.SelectedPath }
-} else {
-  $d = New-Object System.Windows.Forms.OpenFileDialog
-  $d.Title = $env:DF_TITLE; $d.Filter = $env:DF_FILTER
-  $d.Multiselect = ($env:DF_MULTI -eq '1')
-  if ($d.ShowDialog($owner) -eq 'OK') { $d.FileNames | ForEach-Object { Write-Output $_ } }
-}
-$owner.Close()
-"""
+_PICK_LOCK = threading.Lock()
 
 
-def _powershell_pick(kind: str, title: str, initial: str = "", filter_: str = "",
-                     multi: bool = False) -> list[str]:
-    env = dict(os.environ, DF_KIND=kind, DF_TITLE=title, DF_INITIAL=initial or "",
-               DF_FILTER=filter_ or "所有文件|*.*", DF_MULTI="1" if multi else "0")
-    r = subprocess.run(["powershell", "-STA", "-NoProfile", "-NonInteractive", "-Command", _PS_PICK],
-                       capture_output=True, env=env, timeout=1800, creationflags=NO_WINDOW)
-    if r.returncode != 0:
-        raise RuntimeError((r.stderr or b"").decode("utf-8", "replace").strip() or "PowerShell failed")
-    out = (r.stdout or b"").decode("utf-8", "replace")
-    return [ln.strip() for ln in out.splitlines() if ln.strip()]
-
-
-def _filter_string(patterns: tuple) -> str:
-    parts = [f"{name}|{pat}" for name, pat in patterns] + ["所有文件|*.*"]
-    return "|".join(parts)
+def _tk_pick(kind: str, title: str, initial: str = "", patterns: tuple = (), multi: bool = False) -> list[str]:
+    import tkinter as tk
+    from tkinter import filedialog
+    with _PICK_LOCK:
+        root = tk.Tk()
+        try:
+            root.withdraw()
+            root.attributes("-topmost", True)
+            root.lift()
+            root.update()
+            if kind == "folder":
+                got = filedialog.askdirectory(parent=root, title=title, initialdir=initial or None, mustexist=True)
+                return [got] if got else []
+            types = [(n, pat.replace(";", " ")) for n, pat in patterns] + [("所有文件", "*.*")]
+            if multi:
+                return list(filedialog.askopenfilenames(parent=root, title=title, filetypes=types) or ())
+            got = filedialog.askopenfilename(parent=root, title=title, filetypes=types)
+            return [got] if got else []
+        finally:
+            root.destroy()
 
 
 def pick_folder(title: str, initial: str = "") -> str:
-    """Ask the user for a folder. "" when cancelled. Windows only; raises elsewhere."""
-    if not IS_WIN:
-        raise RuntimeError("文件夹选择器只在 Windows 上提供，请直接输入路径")
-    got = _powershell_pick("folder", title, initial)
+    """Ask the user for a folder. "" when cancelled; raises when no dialog can be shown."""
+    got = _tk_pick("folder", title, initial)
     return got[0] if got else ""
 
 
 def pick_files(title: str, patterns: tuple = (), multi: bool = False) -> list[str]:
-    """Ask the user for file(s). patterns: (("PDF", "*.pdf"), ...). [] when cancelled. Windows only."""
-    if not IS_WIN:
-        raise RuntimeError("文件选择器只在 Windows 上提供，请直接输入路径")
-    return _powershell_pick("file", title, filter_=_filter_string(patterns), multi=multi)
+    """Ask the user for file(s). patterns: (("PDF", "*.pdf"), ...). [] when cancelled."""
+    return _tk_pick("file", title, patterns=patterns, multi=multi)
