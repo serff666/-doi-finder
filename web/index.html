@@ -539,12 +539,27 @@ https://doi.org/10.1073/pnas.2321668121"></textarea>
         <span class="aux" id="jdDest"></span>
       </div>
 
+      <div id="jdPanel" class="run-panel" hidden role="status" aria-live="polite">
+        <div class="run-head">
+          <strong id="jdRunTitle"></strong>
+          <span class="run-btns">
+            <button class="btn" id="jdPause" type="button" hidden>暂停</button>
+            <button class="btn danger" id="jdStop" type="button" hidden>停止</button>
+            <button class="btn primary" id="jdRetry" type="button" hidden></button>
+            <button class="btn" id="jdOpenDir" type="button" hidden>打开下载目录</button>
+          </span>
+        </div>
+        <div class="progress"><div class="bar" id="jdBarFill"></div></div>
+        <div class="aux" id="jdProg"></div>
+        <div class="aux" id="jdCurrent"></div>
+      </div>
+
       <div id="jdList"></div>
 
-      <div id="jdResultsWrap" hidden>
-        <div class="section-title" style="margin-top:18px"><h2>下载进度</h2><span class="aux" id="jdProg"></span></div>
+      <details id="jdResultsWrap" hidden>
+        <summary>下载明细</summary>
         <div id="jdResults"></div>
-      </div>
+      </details>
     </section>
   </section>
 </main>

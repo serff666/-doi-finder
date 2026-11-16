@@ -963,6 +963,7 @@ class Handler(BaseHTTPRequestHandler):
                            "markdown": job.get("markdown", ""),
                            "items": job.get("items") or [],
                            "errors": job.get("errors") or [],
+                           "paused": bool(job.get("paused")),
                            "cancelled": job["cancel"].is_set()}
             return self._json(payload)
         if p == "/api/chem/feed":

@@ -26,13 +26,27 @@ window.__log = [];
       { doi: "10.1000/c", title: "C", status: "no_oa" }] },
     D2: { state: "done", done: 1, total: 1, summary: "s2", dest: "/d", results: [{ doi: "10.1000/b", title: "B", status: "downloaded", file: "b.pdf" }] },
   };
-  const order = { lookup: ["L1", "L2", "L3"], download: ["D1", "D2"] };
+  const it = (n, doi) => ({ doi, title: "Paper " + n, year: 2024, volume: "14", issue: String(n), kind: "research" });
+  jobs.H1 = { state: "done", done: 3, total: 3, errors: [], items: [it(1, "10.1000/j1"), it(2, "10.1000/j2"), it(3, "10.1000/j3")] };
+  window.__jd = { paused: false, finish: null };       // the test flips these
+  jobs.J1 = { get state() { return window.__jd.finish ? "done" : "running"; }, get paused() { return window.__jd.paused; },
+    get done() { return window.__jd.finish ? 3 : 1; }, total: 3, current: "10.1000/j2", summary: "s", dest: "/d",
+    get results() { return window.__jd.finish ? [
+      { doi: "10.1000/j1", status: "downloaded", file: "a.pdf" }, { doi: "10.1000/j2", status: "failed", note: "boom" },
+      { doi: "10.1000/j3", status: "no_oa" }] : [{ doi: "10.1000/j1", status: "downloaded", file: "a.pdf" }]; } };
+  jobs.J2 = { state: "done", done: 1, total: 1, dest: "/d", results: [{ doi: "10.1000/j2", status: "downloaded", file: "b.pdf" }] };
+  jobs.J3 = { get state() { return window.__jd.stopped ? "stopped" : "running"; }, cancelled: false, done: 0, total: 3, results: [], dest: "/d" };
+  const order = { lookup: ["L1", "L2", "L3"], download: ["D1", "D2", "J1", "J2", "J3"] };
   const used = { lookup: 0, download: 0 };
   let flaky = 0;
   const json = (o, ok = true, status = 200) => Promise.resolve(new Response(JSON.stringify(o), { status, headers: { "Content-Type": "application/json" } }));
   window.fetch = (url, opt) => {
     const u = String(url), body = opt && opt.body ? JSON.parse(opt.body) : null;
     window.__log.push([u, body]);
+    if (u === "/api/journal/harvest") return json({ job_id: "H1" });
+    let pm = u.match(/^\/api\/(pause|resume)\/J1/);
+    if (pm) { window.__jd.paused = pm[1] === "pause"; return json({ ok: true, paused: window.__jd.paused }); }
+    if (u === "/api/stop/J3") { window.__jd.stoppedSoon = true; return json({ ok: true }); }
     if (u === "/api/lookup" || u === "/api/download") {
       const k = u.slice(5), id = order[k][used[k]++];
       return json({ job_id: id });
@@ -99,6 +113,50 @@ DRIVER = r"""
     const dt = [...document.querySelectorAll("#dlRoot tbody tr")].map((r) => r.textContent.replace(/\s+/g, " "));
     ok("download rows keep order, b now downloaded", dt.length === 3 && /10\.1000\/b.*(已下载|Downloaded)/.test(dt[1]) && /10\.1000\/a.*(已下载|Downloaded)/.test(dt[0]) && /10\.1000\/c.*(无开放获取|No open access)/.test(dt[2]), dt.join("|"));
     ok("download retry hidden when nothing failed", $("retryDownload").hidden);
+
+    // ---- journal library: harvest, then download with a visible progress panel
+    const tabBtn = [...document.querySelectorAll("[data-tab]")].find((b) => /期刊文库|Journal library/i.test(b.textContent));
+    ok("journal library tab exists", !!tabBtn); tabBtn.click();
+    $("jdIssn").value = "1759-0876";
+    $("jdRun").click();
+    await until(() => /抓取完成/.test($("jdRunTitle").textContent), "harvest done");
+    ok("harvest panel says complete with count", /共 3 篇/.test($("jdRunTitle").textContent), $("jdRunTitle").textContent);
+    ok("stop hidden after harvest", $("jdStop").hidden);
+    $("jdDownload").click();
+    await until(() => /正在下载/.test($("jdRunTitle").textContent), "dl started");
+    ok("panel visible with pause and stop", !$("jdPanel").hidden && !$("jdPause").hidden && !$("jdStop").hidden);
+    await until(() => !$("jdPause").disabled && /已处理 1/.test($("jdProg").textContent), "first progress tick");
+    ok("progress text shows counts", /已处理 1 \/ 3/.test($("jdProg").textContent) && /成功 1/.test($("jdProg").textContent), $("jdProg").textContent);
+    ok("current item shown", /10\.1000\/j2/.test($("jdCurrent").textContent), $("jdCurrent").textContent);
+    ok("download button locked while running", $("jdDownload").disabled);
+    $("jdPause").click();
+    await until(() => /已暂停/.test($("jdRunTitle").textContent), "paused");
+    ok("pause sent to the right job", window.__log.some((c) => c[0] === "/api/pause/J1"));
+    ok("pause button now says resume", /继续|Resume/i.test($("jdPause").textContent), $("jdPause").textContent);
+    $("jdPause").click();
+    await until(() => !/已暂停/.test($("jdRunTitle").textContent), "resumed");
+    ok("resume sent", window.__log.some((c) => c[0] === "/api/resume/J1"));
+    window.__jd.finish = true;
+    await until(() => /下载结束/.test($("jdRunTitle").textContent), "dl finished with failures");
+    ok("finish banner counts the failure", /还有 1 篇没成功/.test($("jdRunTitle").textContent), $("jdRunTitle").textContent);
+    ok("panel turns red when something failed", $("jdPanel").classList.contains("bad") && !$("jdPanel").classList.contains("done"));
+    ok("final counts", /成功 1/.test($("jdProg").textContent) && /失败 1/.test($("jdProg").textContent) && /已处理 3 \/ 3/.test($("jdProg").textContent), $("jdProg").textContent);
+    ok("buttons reset, retry offered for 1", $("jdPause").hidden && $("jdStop").hidden && !$("jdRetry").hidden && $("jdRetry").textContent.includes("1") && !$("jdDownload").disabled, $("jdRetry").textContent);
+    $("jdRetry").click();
+    await until(() => /下载完成/.test($("jdRunTitle").textContent), "retry done");
+    const jcalls = window.__log.filter((c) => c[0] === "/api/download");
+    ok("journal retry sends only the failed DOI with its layout", JSON.stringify(jcalls[3][1].dois) === '["10.1000/j2"]' && jcalls[3][1].layout.items.length === 1 && jcalls[3][1].layout.items[0].issue === "2", JSON.stringify(jcalls[3][1]));
+    ok("panel turns green when all done", $("jdPanel").classList.contains("done") && !$("jdPanel").classList.contains("bad"));
+    ok("all-clear banner", /成功 2/.test($("jdRunTitle").textContent) && /无开放获取/.test($("jdRunTitle").textContent) && $("jdRetry").hidden, $("jdRunTitle").textContent);
+    $("jdDownload").click();
+    await until(() => /正在下载/.test($("jdRunTitle").textContent), "second run");
+    await until(() => !$("jdStop").disabled, "stop enabled");
+    $("jdStop").click();
+    await until(() => window.__log.some((c) => c[0] === "/api/stop/J3"), "stop sent");
+    ok("stop acknowledged on screen", /正在停止/.test($("jdRunTitle").textContent), $("jdRunTitle").textContent);
+    window.__jd.stopped = true;
+    await until(() => /已停止/.test($("jdRunTitle").textContent) && !$("jdRetry").hidden, "stopped");
+    ok("stopped run offers retry for the rest", $("jdRetry").textContent.includes("3") || $("jdRetry").textContent.includes("2") || $("jdRetry").textContent.includes("1"), $("jdRetry").textContent);
   } catch (e) { out.err = String(e && e.message || e) + " | dlStatus=" + $("dlStatus").textContent + " | dlFeedback=" + $("dlFeedback").textContent + " | log=" + JSON.stringify(window.__log.slice(-4)); }
   const pre = document.createElement("pre"); pre.id = "result"; pre.textContent = JSON.stringify(out);
   document.body.appendChild(pre);
