@@ -24,6 +24,12 @@ Also: journal feed, lab-page scraping, and reference export. Windows desktop app
 | ⑥ ResearchGate | an author profile URL | that author's publication list |
 | ⑦ Archive | a local PDF | renamed and filed into your library |
 | ⑧ Lab pages | a group's publications page | titles, DOIs and PDF links from that page |
+| ⑨ Journal library | a journal name or ISSN (optional year range) | the whole journal's article list, downloaded into `Journal/Year/Volume V, Issue I/` folders |
+| ⑩ Preprints | a title or the journal DOI | the matching ChemRxiv preprint (its title and DOI may differ from the published paper); tick and download on the same page |
+
+**Every page downloads in its own page.** Each page has its own progress panel (pause, stop, retry the unfinished) and its own download settings: folder, Sci-Hub on/off, institutional browser on/off, workers. Untouched fields follow the defaults (top bar and Settings), so you can download a journal on one page and a group's papers on another at the same time (the institutional browser is a single shared one, so those requests queue). The detail list shows which channel each file came from and, by default, only the unfetched ones; the unfetched list can be exported as CSV. The institutional browser is always tried when the route calls for it, even if you may not subscribe: the paper may be open access.
+
+**Preprints.** ⑩ finds ChemRxiv preprints through the journal record's own link (Crossref `has-preprint`), ChemRxiv search and Crossref, and grades each candidate exact / likely / possible with the reason; only the first two are used automatically. A failed query is reported as an error, never as "none". It is also the last automatic step when every other route failed, and for papers from 2025 on a certain (journal-registered) preprint is tried just before the institutional browser (switch in Settings and per page). A preprint may differ from the published version; downloads are labelled as preprints.
 
 Pasted BibTeX / RIS is matched on more than the title: the year, first author and journal are compared with each candidate. A year two or more apart, or a first author who is none of the listed authors, lowers the status by one level and says so in the note; a missing field never counts against a match. When year and first author both agree and the title similarity is at least 0.70, an "uncertain" match is raised to "likely". Same-title records (a preprint and its journal version) are told apart by year, and the other one stays in the alternates.
 
