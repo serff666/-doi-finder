@@ -670,7 +670,9 @@ window.addEventListener("unhandledrejection", (e) => {
       state.pendingLayout = null;
       const job = await api("/api/download", {
         layout,
-        dois, dir: $("dlDir").value.trim(), email: $("email").value.trim(),
+        dois, workspace: $("dlDir").value.trim(),
+        collection: ($("dlCollection").value.trim() || "未分类"), structure: $("dlStruct").value || "flat",
+        email: $("email").value.trim(),
         template: $("dlTemplate").value.trim(), force: $("forceRedownload").checked,
         workers: Number($("dlWorkers").value),
         scihub: $("scihubEnable").checked,
@@ -1229,14 +1231,32 @@ window.addEventListener("unhandledrejection", (e) => {
     opts = opts || {};
     const P = (n) => prefix + n;
     slot.innerHTML = `<div class="dl-opts" id="${P("Opts")}">
-        <span class="dl-opts-t">本页下载设置</span>
-        <input class="smallinput dl-dir" id="${P("Dir")}" type="text" spellcheck="false" placeholder="下载目录（留空 = 用最上面的默认目录）">
-        <button class="btn sm" id="${P("Pick")}" type="button">选择…</button>
-        <button class="btn sm" id="${P("Open")}" type="button">打开</button>
-        <label class="setting inline"><input id="${P("Sci")}" type="checkbox"><span>Sci-Hub</span></label>
-        <label class="setting inline"><input id="${P("Inst")}" type="checkbox"><span>机构浏览器</span></label>
-        <label class="setting inline" title="2025 年及以后的文献，机构浏览器之前先用期刊记录登记的 ChemRxiv 预印本"><input id="${P("PreEarly")}" type="checkbox"><span>新文献先预印本</span></label>
-        <select class="smallinput" id="${P("Workers")}" title="并发"><option value="1">并发 1</option><option value="3">并发 3</option><option value="5">并发 5</option></select>
+        <div class="dl-row">
+          <span class="dl-opts-t">本页下载设置</span>
+          <input class="smallinput dl-dir" id="${P("Dir")}" type="text" spellcheck="false" placeholder="工作区（留空 = 用最上面的默认工作区）">
+          <button class="btn sm" id="${P("Pick")}" type="button">选择…</button>
+          <button class="btn sm" id="${P("Open")}" type="button">打开</button>
+        </div>
+        <div class="dl-row">
+          <label class="dl-lab" for="${P("Coll")}">放进文件夹</label>
+          <input class="smallinput dl-coll" id="${P("Coll")}" type="text" spellcheck="false" placeholder="自动">
+          <label class="dl-lab" for="${P("Struct")}">里面怎么分</label>
+          <select class="smallinput" id="${P("Struct")}" title="集合文件夹里再怎么分层">
+            <option value="">自动</option>
+            <option value="flat">不分层</option>
+            <option value="year">按年份</option>
+            <option value="journal">按期刊</option>
+            <option value="journal_year">按期刊 → 年份</option>
+            <option value="volume_issue">按年份 → 卷期</option>
+          </select>
+        </div>
+        <div class="dl-where aux" id="${P("Where")}"></div>
+        <div class="dl-row">
+          <label class="setting inline"><input id="${P("Sci")}" type="checkbox"><span>Sci-Hub</span></label>
+          <label class="setting inline"><input id="${P("Inst")}" type="checkbox"><span>机构浏览器</span></label>
+          <label class="setting inline" title="2025 年及以后的文献，机构浏览器之前先用期刊记录登记的 ChemRxiv 预印本"><input id="${P("PreEarly")}" type="checkbox"><span>新文献先预印本</span></label>
+          <select class="smallinput" id="${P("Workers")}" title="并发"><option value="1">并发 1</option><option value="3">并发 3</option><option value="5">并发 5</option></select>
+        </div>
       </div>
       <div id="${P("Panel")}" class="run-panel" hidden role="status" aria-live="polite">
         <div class="run-head">
@@ -1323,7 +1343,7 @@ window.addEventListener("unhandledrejection", (e) => {
 
     async function run(picked, isRetry) {
       const body = S.build(picked);
-      S.dest = body.dir || ($("dlDir") ? $("dlDir").value.trim() : "");
+      S.dest = body.workspace || body.dir || ($("dlDir") ? $("dlDir").value.trim() : "");
       const total = S.picked.length;
       const redo = new Set(picked.map((x) => key(x.doi)));
       redo.forEach((k) => S.rows.delete(k));                 // being redone now
@@ -1351,6 +1371,7 @@ window.addEventListener("unhandledrejection", (e) => {
           }
         }, (d) => {
           merge(d);
+          if (d.dest) S.dest = d.dest;               // the exact folder the server used
           buttons(false);
           const t = render(total, d);
           if (d.state === "error") {
@@ -1391,6 +1412,10 @@ window.addEventListener("unhandledrejection", (e) => {
     const LS = "doifinder.dlopts." + prefix;
     let saved = {};
     try { saved = JSON.parse(localStorage.getItem(LS) || "{}") || {}; } catch { saved = {}; }
+    const STRUCT_LABEL = { flat: "不分层", year: "按年份", journal: "按期刊", journal_year: "按期刊 → 年份", volume_issue: "按年份 → 卷期" };
+    const ctx = () => {
+      try { return (opts.context && opts.context()) || {}; } catch { return {}; }   // the page may not be ready yet
+    };
     const gv = {
       dir: () => ($("dlDir") ? $("dlDir").value.trim() : ""),
       scihub: () => ($("scihubEnable") ? $("scihubEnable").checked : true),
@@ -1398,9 +1423,26 @@ window.addEventListener("unhandledrejection", (e) => {
       pre: () => ($("preprintEarly") ? $("preprintEarly").checked : true),
       workers: () => String(($("dlWorkers") && $("dlWorkers").value) || 3),
     };
+    const safeSeg = (x) => String(x || "").replace(/[<>:"/\\|?*\x00-\x1f]+/g, " ").replace(/\s+/g, " ").trim().replace(/^[. ]+|[. ]+$/g, "");
+    function target() {
+      const c = ctx();
+      const coll = safeSeg(G("Coll").value) || safeSeg(c.name) || "未分类";
+      return { workspace: G("Dir").value.trim() || gv.dir(), collection: coll,
+               structure: G("Struct").value || c.structure || "flat", auto: !G("Struct").value };
+    }
+    function refreshWhere() {
+      const c = ctx(), t = target();
+      G("Coll").placeholder = "自动：" + (safeSeg(c.name) || "未分类");
+      G("Struct").options[0].textContent = "自动（" + (STRUCT_LABEL[c.structure || "flat"]) + "）";
+      const sep = t.workspace.includes("\\") ? "\\" : "/";
+      const ex = { flat: [], year: ["2025"], journal: ["期刊名"], journal_year: ["期刊名", "2025"], volume_issue: ["2025", "Volume 1, Issue 2"] }[t.structure] || [];
+      G("Where").textContent = "将保存到：" + [t.workspace || "（还没设工作区）", t.collection, ...ex, "文件.pdf"].join(sep);
+    }
     function syncDefaults() {
       G("Dir").value = saved.dir !== undefined ? saved.dir : "";
-      G("Dir").placeholder = "下载目录（留空 = 默认：" + (gv.dir() || "未设置") + "）";
+      G("Dir").placeholder = "工作区（留空 = 默认：" + (gv.dir() || "未设置") + "）";
+      G("Struct").value = saved.struct || "";
+      refreshWhere();
       G("Sci").checked = saved.scihub !== undefined ? !!saved.scihub : gv.scihub();
       G("Inst").checked = saved.inst !== undefined ? !!saved.inst : gv.inst();
       G("PreEarly").checked = saved.pre !== undefined ? !!saved.pre : gv.pre();
@@ -1411,6 +1453,8 @@ window.addEventListener("unhandledrejection", (e) => {
       try { localStorage.setItem(LS, JSON.stringify(saved)); } catch { /* private mode */ }
     }
     G("Dir").addEventListener("change", () => remember("dir", G("Dir").value.trim()));
+    G("Struct").addEventListener("change", () => remember("struct", G("Struct").value));
+    ["input", "change", "click"].forEach((ev) => document.addEventListener(ev, () => setTimeout(refreshWhere, 0)));
     G("Sci").addEventListener("change", () => remember("scihub", G("Sci").checked));
     G("Inst").addEventListener("change", () => remember("inst", G("Inst").checked));
     G("PreEarly").addEventListener("change", () => remember("pre", G("PreEarly").checked));
@@ -1422,8 +1466,8 @@ window.addEventListener("unhandledrejection", (e) => {
       } catch (e) { toast(e.message); }
     });
     G("Open").addEventListener("click", () =>
-      api("/api/open-folder", { path: G("Dir").value.trim() || gv.dir() }).catch((e) => toast(e.message)));
-    const pageDir = () => G("Dir").value.trim() || gv.dir();
+      api("/api/open-folder", { path: S.dest || target().workspace }).catch((e) => toast(e.message)));
+    const pageDir = () => target().workspace;
     document.addEventListener("doifinder:settings", syncDefaults);
     syncDefaults();
 
@@ -1457,10 +1501,14 @@ window.addEventListener("unhandledrejection", (e) => {
       get busy() { return S.busy; },
       get rows() { return S.rows; },
       dir: pageDir,
+      /** {workspace, collection, structure} this page would file into right now */
+      target,
       /** POST body for /api/download with THIS page's folder and channels */
       body(dois, extra) {
         const b = downloadBody(dois, extra);
-        b.dir = pageDir();
+        const t = target();
+        delete b.dir;
+        b.workspace = t.workspace; b.collection = t.collection; b.structure = t.structure;
         b.scihub = G("Sci").checked;
         b.inst = G("Inst").checked;
         b.preprint_early = G("PreEarly").checked;
@@ -1504,6 +1552,23 @@ window.addEventListener("unhandledrejection", (e) => {
   }
 
   const _dlPanels = {};
+  // What each page is collecting decides the first-level folder under the workspace and how it is divided.
+  const hostOf = (u) => { try { return new URL(String(u).trim()).hostname.replace(/^www\./, ""); } catch { return ""; } };
+  const rgName = (u) => { const m = String(u).match(/researchgate\.net\/profile\/([^/?#]+)/i);
+    return m ? m[1].replace(/[-_]+/g, " ").replace(/\s+\d+$/, "").trim() : ""; };
+  const DL_CTX = {
+    lk: () => ({ name: "未分类", structure: "flat" }),
+    sr: () => { const a = $("qAuthor").value.trim(), o = $("qOrcid").value.trim(), q = $("q").value.trim();
+      if (a) return { name: a, structure: "year" };
+      if (o) return { name: "ORCID " + o, structure: "year" };
+      return { name: q ? q.slice(0, 50) : "主题检索", structure: "flat" }; },
+    cx: () => ({ name: "ChemASAP", structure: "journal" }),
+    jf: () => { const t = ($("jTitle").textContent || "").trim();
+      return { name: t && !/^选择/.test(t) ? t : "期刊追新", structure: "year" }; },
+    rg: () => ({ name: rgName($("rgUrl").value) || "ResearchGate", structure: "year" }),
+    lb: () => ({ name: hostOf($("labUrl").value) || "课题组网页", structure: "year" }),
+    pp: () => ({ name: "预印本", structure: "flat" }),
+  };
   /** Download `dois` on the page that asked, with its own panel placed right under `anchor`'s toolbar. */
   function ensurePanel(key, anchor) {
     let p = _dlPanels[key];
@@ -1511,7 +1576,7 @@ window.addEventListener("unhandledrejection", (e) => {
       const slot = document.createElement("div");
       const host = anchor.closest(".result-head, .searchbar-actions, .journal-main-head, .row") || anchor.parentElement;
       host.parentNode.insertBefore(slot, host.nextSibling);
-      p = _dlPanels[key] = makeDlPanel(key, slot);
+      p = _dlPanels[key] = makeDlPanel(key, slot, { context: DL_CTX[key] });
     }
     return p;
   }
@@ -2072,7 +2137,7 @@ window.addEventListener("unhandledrejection", (e) => {
     const slot = document.createElement("div");
     const bar = $("ppDownload").closest(".searchbar-actions");
     bar.parentNode.insertBefore(slot, bar.nextSibling);
-    const dl = makeDlPanel("pp", slot, { onBusy: () => refresh() });
+    const dl = makeDlPanel("pp", slot, { onBusy: () => refresh(), context: DL_CTX.pp });
 
     const failedIdx = () => PP.rows.map((r, i) => (["error", "stopped"].includes(r.status) ? i : -1)).filter((i) => i >= 0);
     const setFb = (msg, bad) => feedback("ppFeedback", msg, !!bad);
@@ -2221,6 +2286,8 @@ window.addEventListener("unhandledrejection", (e) => {
     };
     const jdDl = makeDlPanel("jd", document.getElementById("jdSlot"), {
       onBusy: (on) => { document.getElementById("jdDownload").disabled = on; },
+      context: () => ({ name: st.journal || (st.rows[0] && st.rows[0].journal) || (G("jdIssn").value || "").trim() || "期刊文库",
+                        structure: "volume_issue" }),
     });
 
     const setFb = (msg, bad) => feedback("jdFeedback", msg, !!bad);
@@ -2452,7 +2519,8 @@ window.addEventListener("unhandledrejection", (e) => {
       if (byDoi.length) dlHere("lb", $("labDownload"), byDoi.map((x) => x.doi));
       if (!direct.length) return;
       try {
-        const r = await api("/api/lab/download", { items: direct, dir: _dlPanels.lb ? _dlPanels.lb.dir() : ($("dlDir") ? $("dlDir").value.trim() : "") });
+        const lbT = _dlPanels.lb ? _dlPanels.lb.target() : { workspace: $("dlDir").value.trim(), collection: "课题组网页", structure: "year" };
+        const r = await api("/api/lab/download", { items: direct, workspace: lbT.workspace, collection: lbT.collection, structure: lbT.structure });
         pollJob(r.job_id, (d) => {
           $("labCount").textContent = `直链下载 ${d.done}/${d.total}`;
         }, (d) => {

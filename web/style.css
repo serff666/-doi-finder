@@ -345,3 +345,10 @@ tr.editing > td { background: #eef3ff; }
 .dl-opts .dl-dir { flex: 1 1 260px; min-width: 200px; }
 .dl-restools { display: flex; align-items: center; gap: 12px; margin: 6px 0; }
 .dl-opts select.smallinput { width: auto; flex: 0 0 auto; }
+
+.dl-opts { display: block; }
+.dl-opts .dl-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 4px 0; }
+.dl-opts .dl-lab { font-size: 12px; color: #6b7690; }
+.dl-opts .dl-coll { flex: 1 1 200px; min-width: 160px; }
+.dl-opts select.smallinput { width: auto; flex: 0 0 auto; }
+.dl-where { margin: 2px 0 4px; word-break: break-all; }

@@ -32,7 +32,7 @@
 
   <div class="settingsbar panel">
     <div class="set-field grow">
-      <label for="dlDir">默认下载目录 <span class="aux">（② 页使用；其它页面可在各自页面单独设置，留空则用这个）</span></label>
+      <label for="dlDir">工作区 <span class="aux">（所有文献的根目录，例如 D:\文献。每次下载自动放进它下面按作者名 / 期刊名 / 课题组等命名的文件夹；各页面可单独改）</span></label>
       <input id="dlDir" type="text" spellcheck="false" placeholder="选择或填写一个文件夹">
     </div>
     <button class="btn sm" id="pickDir" type="button">选择…</button>
@@ -256,7 +256,14 @@ https://doi.org/10.1073/pnas.2321668121"></textarea>
         </div>
         <div class="rule">
           <strong>文件去哪了</strong>
-          <p>保存在上面的「下载目录」；同目录的 <code>.doi-index.json</code> 记录已下载的 DOI，重复运行会自动跳过。</p>
+          <p>保存在 <code>工作区 / 文件夹 / 分层 / 文件.pdf</code>。这里下载的 DOI 默认放进「未分类」；可在下面改文件夹名和分层。工作区根目录的 <code>.doi-index.json</code> 记录已下载的文献，别的文件夹里已有的会直接复制，不重复下载。</p>
+          <input class="smallinput" id="dlCollection" placeholder="放进文件夹（默认：未分类）">
+          <select class="smallinput" id="dlStruct">
+            <option value="flat" selected>不分层</option>
+            <option value="year">按年份</option>
+            <option value="journal">按期刊</option>
+            <option value="journal_year">按期刊 → 年份</option>
+          </select>
         </div>
       </aside>
     </div>

@@ -30,6 +30,7 @@ from urllib.parse import unquote, urlparse
 import chem
 import browser
 import downloader
+import filing
 import journalinfo
 import journals
 import netpolicy
@@ -580,9 +581,10 @@ def run_lab_dl_job(jid: str, items: list, opts: dict) -> None:
     job = JOBS[jid]
     try:
         import labpage
-        dest = (opts.get("dir") or load_settings().get("download_dir") or "").strip()
+        root, dest, structure = job_paths(opts)
         if not dest:
             dest = os.path.join(os.path.expanduser("~"), "Downloads", "DOI Finder", "lab")
+        _register_job_dir(root or dest)
         _register_job_dir(dest)
         done = {"n": 0}
 
@@ -593,7 +595,7 @@ def run_lab_dl_job(jid: str, items: list, opts: dict) -> None:
 
         log(f"lab download: {len(items)} items -> {dest}")
         results = labpage.download_pdfs(items, dest, progress=prog,
-                                        stop_event=job["cancel"])
+                                        stop_event=job["cancel"], structure=structure)
         log(f"lab download done: {len(results)} records, {sum(1 for r in results if r.get('status')=='downloaded')} ok")
         job["markdown"] = f"下载完成：{sum(1 for r in results if r['status'] == 'downloaded')}/{len(results)} 篇，目录 {dest}"
         job["state"] = "done"
@@ -622,9 +624,22 @@ def run_rg_job(jid: str, conf: dict, url: str) -> None:
         job["state"] = "error"
 
 
+def job_paths(opts: dict) -> tuple[str, str, str]:
+    """(workspace, collection folder, structure) for a download request.
+
+    New requests carry workspace + collection + structure; an old one carries just `dir`
+    (then there is no collection level and the files go straight into it)."""
+    root = str(opts.get("workspace") or opts.get("dir") or load_settings()["download_dir"]).strip()
+    coll = opts.get("collection")
+    dest = filing.destination(root, coll) if isinstance(coll, str) and coll.strip() else root
+    structure = opts.get("structure") if opts.get("structure") in filing.STRUCTURES else "flat"
+    return root, dest, structure
+
+
 def run_download_job(job_id: str, dois: list[str], opts: dict):
     job = JOBS[job_id]
-    dest = opts.get("dir") or load_settings()["download_dir"]
+    root, dest, structure = job_paths(opts)
+    _register_job_dir(root)
     _register_job_dir(dest)
     try:
         os.makedirs(dest, exist_ok=True)
@@ -655,6 +670,7 @@ def run_download_job(job_id: str, dois: list[str], opts: dict):
             step=step,
             workers=int(opts.get("workers") or load_settings().get("download_workers") or 3),
             folders=opts.get("_folders") or None,
+            root=root, structure=structure,
         )
         job["results"] = results
         counts: dict[str, int] = {}
@@ -1272,10 +1288,13 @@ class Handler(BaseHTTPRequestHandler):
                 # journal harvest: file each DOI under <Journal>/<Year>/Volume V, Issue I
                 jname = str(layout.get("journal") or "")
                 folders = {}
+                named = isinstance(body.get("collection"), str) and body["collection"].strip()
                 for it in (layout.get("items") or []):
                     if isinstance(it, dict) and it.get("doi"):
-                        folders[str(it["doi"]).strip().lower()] = downloader.journal_folder(
-                            jname, it.get("year"), it.get("volume"), it.get("issue"))
+                        # with a collection (the journal's own folder) only Year/Volume, Issue is left
+                        folders[str(it["doi"]).strip().lower()] = (
+                            filing.sub_for("volume_issue", it) if named else
+                            downloader.journal_folder(jname, it.get("year"), it.get("volume"), it.get("issue")))
                 body["_folders"] = folders
             _cleanup_jobs()
             jid = uuid.uuid4().hex[:12]

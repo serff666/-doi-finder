@@ -189,6 +189,11 @@ DRIVER = r"""
     ok("every page has its own settings before any download", !!$("lkDir") && !!$("ppDir") && !!$("jdDir") && !!$("sr" + "Dir"));
     ok("channels default from the global ones", $("lkSci").checked === $("scihubEnable").checked && $("lkInst").checked === $("instEnable").checked);
     $("lkDir").value = "/tmp/lk"; $("lkDir").dispatchEvent(new Event("change"));
+    ok("lookup page suggests the inbox, flat", /自动：未分类/.test($("lkColl").placeholder) && /不分层/.test($("lkStruct").options[0].textContent), $("lkColl").placeholder + " | " + $("lkStruct").options[0].textContent);
+    $("lkColl").value = "Manual Folder"; $("lkColl").dispatchEvent(new Event("input"));
+    $("lkStruct").value = "year"; $("lkStruct").dispatchEvent(new Event("change"));
+    await sleep(30);
+    ok("the preview shows the full path with the sub folder", /\/tmp\/lk\/Manual Folder\/2025\/文件\.pdf/.test($("lkWhere").textContent), $("lkWhere").textContent);
     $("lkSci").checked = false; $("lkSci").dispatchEvent(new Event("change"));
     $("lkInst").checked = true; $("lkInst").dispatchEvent(new Event("change"));
     $("lkWorkers").value = "5"; $("lkWorkers").dispatchEvent(new Event("change"));
@@ -204,11 +209,27 @@ DRIVER = r"""
     ok("open-folder button right beside the finished lookup download", !$("lkOpenDir").hidden);
     $("lkOpenDir").click();
     await until(() => window.__log.some((c) => c[0] === "/api/open-folder"), "open folder");
-    ok("it opens that page's own folder", window.__log.filter((c) => c[0] === "/api/open-folder").slice(-1)[0][1].path === "/tmp/lk");
+    ok("it opens the folder the server reported", window.__log.filter((c) => c[0] === "/api/open-folder").slice(-1)[0][1].path === "/d", JSON.stringify(window.__log.filter((c) => c[0] === "/api/open-folder").slice(-1)));
     ok("lookup download stays on the lookup page", document.getElementById("tab-lookup") && !document.getElementById("tab-lookup").hidden && document.getElementById("tab-download").hidden);
     const lkBody = window.__log.filter((c) => c[0] === "/api/download").slice(-1)[0][1];
-    ok("lookup download uses its own folder and channels", lkBody.dir === "/tmp/lk" && lkBody.scihub === false && lkBody.inst === true && lkBody.workers === 5 && lkBody.preprint_early === true, JSON.stringify(lkBody));
+    ok("lookup download uses its own folder and channels", lkBody.workspace === "/tmp/lk" && lkBody.dir === undefined && lkBody.collection === "Manual Folder" && lkBody.structure === "year" && lkBody.scihub === false && lkBody.inst === true && lkBody.workers === 5 && lkBody.preprint_early === true, JSON.stringify(lkBody));
     ok("in-page download sent the matched DOIs", window.__log.filter((c) => c[0] === "/api/download").slice(-1)[0][1].dois.includes("10.1000/alpha"), JSON.stringify(window.__log.filter((c) => c[0] === "/api/download").slice(-1)));
+
+    // ---- every page suggests a folder named after what it collects
+    $("qAuthor").value = "Zhang Xinglong"; $("qAuthor").dispatchEvent(new Event("input", { bubbles: true })); await sleep(30);
+    ok("search by author -> author folder, by year", /自动：Zhang Xinglong/.test($("srColl").placeholder) && /按年份/.test($("srStruct").options[0].textContent), $("srColl").placeholder + $("srStruct").options[0].textContent);
+    $("qAuthor").value = ""; $("q").value = "perylene bisimide exciton"; $("q").dispatchEvent(new Event("input", { bubbles: true })); await sleep(30);
+    ok("search by topic -> topic folder, flat", /自动：perylene bisimide exciton/.test($("srColl").placeholder) && /不分层/.test($("srStruct").options[0].textContent));
+    $("rgUrl").value = "https://www.researchgate.net/profile/Some-Name-3"; $("rgUrl").dispatchEvent(new Event("input", { bubbles: true })); await sleep(30);
+    ok("ResearchGate -> the author's name", /自动：Some Name$/.test($("rgColl").placeholder), $("rgColl").placeholder);
+    $("labUrl").value = "https://www.example.edu/group/pubs.html"; $("labUrl").dispatchEvent(new Event("input", { bubbles: true })); await sleep(30);
+    ok("lab page -> its host", /自动：example\.edu$/.test($("lbColl").placeholder), $("lbColl").placeholder);
+    ok("ChemASAP -> by journal", /自动：ChemASAP/.test($("cxColl").placeholder) && /按期刊/.test($("cxStruct").options[0].textContent));
+    ok("journal library -> volume/issue structure", /按年份 → 卷期/.test($("jdStruct").options[0].textContent), $("jdStruct").options[0].textContent);
+    $("srColl").value = 'A/B:C*'; $("srColl").dispatchEvent(new Event("input", { bubbles: true })); await sleep(30);
+    ok("unsafe characters never reach the path preview", /\/A B C\//.test($("srWhere").textContent) && !/[*:]/.test($("srWhere").textContent.replace(/^将保存到：/, "").replace(/^[A-Za-z]:/, "")), $("srWhere").textContent);
+    ok("the DOI->PDF page files into the inbox by default", window.__log.filter((c) => c[0] === "/api/download")[0][1].collection === "未分类" && window.__log.filter((c) => c[0] === "/api/download")[0][1].structure === "flat");
+    ok("journal library request carries the volume/issue structure and a collection", (() => { const j = window.__log.filter((c) => c[0] === "/api/download").find((c) => c[1].layout); return j && j[1].structure === "volume_issue" && j[1].collection.length > 0; })());
 
     // ---- preprint page
     document.querySelector('[data-tab="preprint"]').click();
@@ -242,7 +263,7 @@ DRIVER = r"""
     await until(() => /下载完成/.test($("ppRunTitle").textContent), "preprint download");
     const pc = window.__log.filter((c) => c[0] === "/api/download").slice(-1)[0][1];
     ok("preprint download sends the selected preprint DOIs", JSON.stringify(pc.dois.slice().sort()) === '["10.26434/chemrxiv-1","10.26434/chemrxiv-2","10.26434/chemrxiv-3"]', JSON.stringify(pc.dois));
-    ok("untouched folder falls back to the default one, channels stay default", pc.dir === "/global" && pc.scihub === $("scihubEnable").checked && pc.inst === $("instEnable").checked, JSON.stringify(pc));
+    ok("untouched folder falls back to the default one, channels stay default", pc.workspace === "/global" && pc.collection === "预印本" && pc.structure === "flat" && pc.scihub === $("scihubEnable").checked && pc.inst === $("instEnable").checked, JSON.stringify(pc));
     ok("pp panel all fetched says so", /全部已获取/.test($("ppResults").textContent), $("ppResults").textContent);
     ok("lk settings kept independently", $("lkDir").value === "/tmp/lk" && $("lkSci").checked === false);
     $("ppDir").value = "/tmp/pp"; $("ppDir").dispatchEvent(new Event("change"));

@@ -63,11 +63,15 @@ server.save_settings({"download_dir": OUT})
 
 
 def fake_download_one(doi, dest, email, template, index, force=False, *a, **k):
-    os.makedirs(dest, exist_ok=True)
+    root, sub_of = k.get("root") or dest, k.get("sub_of")
+    sub = (sub_of({}) if callable(sub_of) else sub_of) or ""       # the sub folder is decided inside download_one now
+    folder = os.path.join(dest, *sub.split("/")) if sub else dest
+    os.makedirs(folder, exist_ok=True)
     name = doi.replace("/", "_") + ".pdf"
-    open(os.path.join(dest, name), "wb").write(b"%PDF-1.4 fake")
-    index[doi] = {"file": name, "title": doi}
-    return {"doi": doi, "status": "downloaded", "file": name, "url": "", "source": "test", "note": "", "title": "", "year": ""}
+    open(os.path.join(folder, name), "wb").write(b"%PDF-1.4 fake")
+    rel = os.path.relpath(os.path.join(folder, name), dest).replace(os.sep, "/")
+    index[doi] = {"file": os.path.relpath(os.path.join(folder, name), root).replace(os.sep, "/"), "title": doi}
+    return {"doi": doi, "status": "downloaded", "file": rel, "url": "", "source": "test", "note": "", "title": "", "year": ""}
 
 
 downloader.download_one = fake_download_one
@@ -101,7 +105,7 @@ assert all("select" in q for q in SEEN_QS), "harvest must request a trimmed fiel
 assert not any("全部" in json.dumps(q) for q in SEEN_QS)
 
 dois = [i["doi"] for i in items]
-res = wait(call("/api/download", {"dois": dois, "dir": OUT, "workers": 3,
+res = wait(call("/api/download", {"dois": dois, "workspace": OUT, "collection": JOURNAL, "structure": "volume_issue", "workers": 3,
                                   "layout": {"journal": JOURNAL, "items": items}})["job_id"])
 assert res["state"] == "done", res
 got = sorted(os.path.relpath(os.path.join(d, f), OUT).replace(os.sep, "/") for d, _, fs in os.walk(OUT) for f in fs if f.endswith(".pdf"))
