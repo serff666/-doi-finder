@@ -1,4 +1,5 @@
-"""File / folder pickers: Windows goes through PowerShell, anything else (or a failure) through Tk."""
+"""File / folder pickers: Windows only, through PowerShell; no fallback of any kind."""
+import os
 import subprocess
 
 import platform_util as pu
@@ -43,21 +44,30 @@ def test_windows_files_filter_and_multiselect(monkeypatch):
     assert seen["env"]["DF_FILTER"] == "PDF|*.pdf|所有文件|*.*" and seen["env"]["DF_MULTI"] == "1"
 
 
-def test_windows_failure_falls_back_to_tk(monkeypatch):
+def test_windows_failure_is_an_error_not_a_second_dialog(monkeypatch):
+    import pytest
     monkeypatch.setattr(pu, "IS_WIN", True)
     _fake_run(monkeypatch, _Done(b"", 1, b"boom"), {})
-    calls = []
-    monkeypatch.setattr(pu, "_tk_pick", lambda *a, **k: calls.append((a, k)) or ["/tk/dir"])
-    assert pu.pick_folder("x") == "/tk/dir" and len(calls) == 1
+    with pytest.raises(Exception):
+        pu.pick_folder("x")
     _fake_run(monkeypatch, FileNotFoundError("no powershell"), {})
-    assert pu.pick_files("x", (("PDF", "*.pdf"),)) == ["/tk/dir"]
+    with pytest.raises(Exception):
+        pu.pick_files("x", (("PDF", "*.pdf"),))
 
 
-def test_non_windows_goes_straight_to_tk(monkeypatch):
+def test_non_windows_has_no_dialog(monkeypatch):
+    import pytest
     monkeypatch.setattr(pu, "IS_WIN", False)
     _fake_run(monkeypatch, RuntimeError("PowerShell must not run"), {})
-    monkeypatch.setattr(pu, "_tk_pick", lambda *a, **k: [])
-    assert pu.pick_folder("x") == "" and pu.pick_files("x") == []
+    with pytest.raises(RuntimeError):
+        pu.pick_folder("x")
+    with pytest.raises(RuntimeError):
+        pu.pick_files("x")
+
+
+def test_no_tk_anywhere():
+    src = open(os.path.join(os.path.dirname(pu.__file__), "platform_util.py"), encoding="utf-8").read()
+    assert "tkinter" not in src and "_tk_pick" not in src
 
 
 def test_server_pickers_have_no_tk_left():
