@@ -163,7 +163,7 @@ window.addEventListener("unhandledrejection", (e) => {
         ${alts.length ? `<div class="edit-alts">${alts.map((a, k) => `
           <button class="alt-card" type="button" data-pick="${k}">
             <span class="alt-title">${esc(a.title || "")}</span>
-            <span class="alt-meta">${esc([a.year, a.journal, a.doi].filter(Boolean).join(" · "))}</span>
+            <span class="alt-meta">${esc([a.first_author, a.year, a.journal, a.doi].filter(Boolean).join(" · "))}</span>
             <span class="alt-score">${typeof a.score === "number" ? Math.round(a.score * 100) + "%" : ""} ${esc(a.source || "")}</span>
           </button>`).join("")}</div>` : `<div class="aux" style="margin-bottom:8px">这条没有候选记录，直接填 DOI。</div>`}
         <div class="edit-line">

@@ -21,6 +21,15 @@ def _clean(v: str) -> str:
     return re.sub(r"\s+", " ", v).strip().strip(",")
 
 
+def _first_author(value: str) -> str:
+    """First name of a BibTeX author list ("A, B and C, D and others"); "" if none."""
+    for part in re.split(r"\s+and\s+", value or "", flags=re.I):
+        part = part.strip()
+        if part and part.lower() != "others":
+            return part
+    return ""
+
+
 def parse_bibtex(text: str) -> list[dict]:
     out = []
     # 用花括号配对切块：单行、多行、嵌套大括号都能处理
@@ -44,7 +53,8 @@ def parse_bibtex(text: str) -> list[dict]:
         if not title and not doi:
             continue
         out.append({"title": title, "doi": doi, "year": fields.get("year", ""),
-                    "journal": fields.get("journal", "") or fields.get("booktitle", "")})
+                    "journal": fields.get("journal", "") or fields.get("booktitle", ""),
+                    "author": _first_author(fields.get("author", ""))})
     return out
 
 
@@ -65,6 +75,8 @@ def parse_ris(text: str) -> list[dict]:
             cur["title"] = val
         elif tag == "DO":
             cur["doi"] = val
+        elif tag in ("AU", "A1"):
+            cur.setdefault("author", val)
         elif tag == "PY" or tag == "Y1":
             cur.setdefault("year", val[:4])
         elif tag == "JO" or tag == "JF" or tag == "T2":
