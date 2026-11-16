@@ -1296,10 +1296,11 @@ window.addEventListener("unhandledrejection", (e) => {
         const shown = view.slice(0, 500);
         G("Results").innerHTML = view.length
           ? `<div class="results-scroll"><table class="results-table">
-          <thead><tr><th>DOI</th><th>状态</th><th>文件 / 说明</th></tr></thead>
+          <thead><tr><th>DOI</th><th>状态</th><th>下载渠道</th><th>文件 / 说明</th></tr></thead>
           <tbody>${shown.map((x) => `<tr>
             <td>${esc(x.doi || "")}</td>
             <td>${esc((DL_STATUS[x.status] || [x.status])[0])}</td>
+            <td>${esc(x.status === "exists" ? "本地已有" : (x.source || ""))}</td>
             <td class="aux">${esc(x.file || x.note || "")}</td></tr>`).join("")}</tbody></table></div>`
             + (view.length > shown.length ? `<div class="aux">只显示前 ${shown.length} 条，其余请用「导出未获取清单」</div>` : "")
           : `<div class="aux">${S.busy ? "暂时没有失败的条目" : "✓ 全部已获取，没有未获取的条目"}</div>`;
