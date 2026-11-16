@@ -1,7 +1,10 @@
 # DOI Finder
 
-Batch-resolve paper titles to DOIs, then batch-download the DOIs as local PDFs.
-Also: journal feed, lab-page scraping, and reference export. Windows desktop app that also runs from source on Linux (see [README.linux.md](README.linux.md)); the UI runs in your browser at `http://127.0.0.1:8765/`.
+**From a list of paper titles to a tidy local library of PDFs.**
+A tool that runs on your own computer: it resolves titles (or whole reference strings) to DOIs, then picks the right route per publisher to download the PDFs and name them consistently.
+
+The UI runs in your browser at `http://127.0.0.1:8765/`. No account, no registration; your data and keys stay on your machine.
+Windows desktop app that also runs from source on Linux (see [README.linux.md](README.linux.md)).
 
 > 中文说明见 [README.md](README.md)。
 
@@ -12,26 +15,68 @@ Also: journal feed, lab-page scraping, and reference export. Windows desktop app
 > Respect publishers' terms of service and copyright law; use downloaded papers for personal research only and do not redistribute them.
 > 本项目仅用于学术研究与学习，不用于商业盈利；使用第三方来源的风险与责任由使用者自行承担。
 
-## What it does
+## The problem
+
+You have dozens or hundreds of titles, or a reference list, and want the full texts. Searching each DOI by hand is error-prone; each publisher page is different (open access, subscription, captcha); and afterwards file names are a mess and you lose track of what you already have.
+
+DOI Finder chains those steps into one pipeline and **tells you, at every step, how trustworthy the result is and why something failed.**
+
+## Highlights
+
+**Title → DOI: accurate, and it shows its evidence**
+- Not "take the first search hit": title similarity, first author, year, journal and volume/pages corroborate each other, giving four levels (high confidence / likely / needs a look / not found) with the reason for each.
+- Paste one title per line, whole references, numbered lists, BibTeX or RIS; a trailing `doi:` is used directly.
+- Crossref first, OpenAlex as fallback; a preprint and its journal version are told apart by year; Chinese papers can be completed from a Baidu Scholar link.
+- Export Excel / Markdown / HTML / CSV / DOI list, and **GB/T 7714, ACS, APA** references.
+
+**DOI → PDF: many routes, chosen per publisher**
+- Order depends on DOI prefix and year: Elsevier / Wiley via their official APIs, subscription journals (ACS, RSC…) via your institutional browser, open publishers directly, preprints their own way.
+- The open-access step queries OpenAlex, Unpaywall, Europe PMC, Semantic Scholar, PMC, OSTI, Zenodo, HAL, Crossref, DOAJ, CORE and Internet Archive Scholar in parallel and takes the first valid PDF.
+- Sci-Hub / Sci-Net fallback (can be turned off): mirrors are ordered by success rate, ALTCHA challenges are solved automatically.
+- **The institutional browser is always tried**: it reuses your own Chrome/Edge session (campus network or CARSI); the app never sees your password, and never skips it on a guess that you do not subscribe (the paper may be open access).
+- **Preprint fallback**: when the journal version cannot be had, ChemRxiv is searched for the same paper. Title and DOI often differ, so the match uses the journal record's own link, title, first author and year, and every match says how it was made. For papers from 2025 on (often not in open-access indexes yet), a preprint the journal record itself names is tried right before the institutional browser.
+- SSRN / Research Square preprint DOIs are traded for the published version when Crossref knows it.
+
+**Robust batches**
+- Resumable and de-duplicated (`.doi-index.json` in the folder); files are checked for a complete PDF and re-fetched if truncated.
+- Pause / resume / stop; retry only what did not finish; show only the unfetched; export the unfetched list (CSV).
+- Every row states the **channel it actually came from** and, if it failed, the reason (no open access / subscription / captcha / timeout).
+- Filename template `{first_author}_{year}_{title}` (plus `{journal}`, `{doi}`); long titles, Chinese and Windows reserved names are handled.
+
+**Several ways in, all able to download**
+- **Topic search** (keywords / author / ORCID / years, optional open-access only), **ChemASAP**, **Journal feed** (what is new since you last looked), **Journal library** (a whole journal from its first issue, filed as `Journal/Year/Volume V, Issue I/`), **Lab pages** (any publications page, scraped in a real browser), **ResearchGate**, a dedicated **Preprints** page, and **Archive** for PDFs you got elsewhere.
+
+**Every page on its own**
+Each page downloads in place with its own progress panel (bar, pause, stop, retry, open folder) and its own **folder, Sci-Hub switch, institutional-browser switch and worker count**. Download a journal on one page and a group's papers on another at the same time.
+
+**Local and transparent**
+No account; keys (Elsevier, Wiley, CORE, OpenAlex) are stored only in `settings.json` on your machine; English / Chinese UI; each channel can be switched off; certificate verification is on by default.
+
+## Quick start
+
+1. Start the app and open `http://127.0.0.1:8765/`; choose a default download folder at the top and (optionally) put a contact email in Settings to be rate-limited less.
+2. On **① Title → DOI** paste titles, click start, and look at the levels.
+3. Click "→ download these PDFs" and watch the panel on the same page; for papers that failed use "find preprint version" or "retry".
+4. Export the unfetched list, or open the download folder.
+
+## Tabs
 
 | Tab | Input | Output |
 |---|---|---|
-| ① Title → DOI | a list of titles or full citations | one DOI per line, exportable |
+| ① Title → DOI | a list of titles or full citations | one DOI per line with confidence and evidence; exportable |
 | ② DOI → PDF | a list of DOIs | local PDFs, normalised filenames, resumable |
-| ③ Topic search | keywords, author, ORCID, years | matching papers; add to the download queue |
+| ③ Topic search | keywords, author, ORCID, years | matching papers; download on the same page |
 | ④ ChemASAP | none | latest ASAP articles in organic chemistry |
-| ⑤ Journal feed | journal name or ISSN (+ optional year range) | recent articles, or the whole journal downloaded into `Journal/Year/Volume V, Issue I/` folders |
+| ⑤ Journal feed | journal name or ISSN | recent articles, unread marked |
 | ⑥ ResearchGate | an author profile URL | that author's publication list |
 | ⑦ Archive | a local PDF | renamed and filed into your library |
 | ⑧ Lab pages | a group's publications page | titles, DOIs and PDF links from that page |
 | ⑨ Journal library | a journal name or ISSN (optional year range) | the whole journal's article list, downloaded into `Journal/Year/Volume V, Issue I/` folders |
-| ⑩ Preprints | a title or the journal DOI | the matching ChemRxiv preprint (its title and DOI may differ from the published paper); tick and download on the same page |
+| ⑩ Preprints | a title or the journal DOI | the matching ChemRxiv preprint (title and DOI may differ from the published paper); tick and download on the same page |
 
-**Every page downloads in its own page.** Each page has its own progress panel (pause, stop, retry the unfinished) and its own download settings: folder, Sci-Hub on/off, institutional browser on/off, workers. Untouched fields follow the defaults (top bar and Settings), so you can download a journal on one page and a group's papers on another at the same time (the institutional browser is a single shared one, so those requests queue). The detail list shows which channel each file came from and, by default, only the unfetched ones; the unfetched list can be exported as CSV. The institutional browser is always tried when the route calls for it, even if you may not subscribe: the paper may be open access.
+Pasted BibTeX / RIS is matched on more than the title: year, first author and journal are compared with each candidate. A year two or more apart, or a first author who is none of the listed authors, lowers the status by one level and says so in the note; a missing field never counts against a match. When year and first author both agree and the title similarity is at least 0.70, an "uncertain" match is raised to "likely".
 
-**Preprints.** ⑩ finds ChemRxiv preprints through the journal record's own link (Crossref `has-preprint`), ChemRxiv search and Crossref, and grades each candidate exact / likely / possible with the reason; only the first two are used automatically. A failed query is reported as an error, never as "none". It is also the last automatic step when every other route failed, and for papers from 2025 on a certain (journal-registered) preprint is tried just before the institutional browser (switch in Settings and per page). A preprint may differ from the published version; downloads are labelled as preprints.
-
-Pasted BibTeX / RIS is matched on more than the title: the year, first author and journal are compared with each candidate. A year two or more apart, or a first author who is none of the listed authors, lowers the status by one level and says so in the note; a missing field never counts against a match. When year and first author both agree and the title similarity is at least 0.70, an "uncertain" match is raised to "likely". Same-title records (a preprint and its journal version) are told apart by year, and the other one stays in the alternates.
+**Preprints.** ⑩ finds ChemRxiv preprints through the journal record's own link (Crossref `has-preprint`), ChemRxiv search and Crossref, and grades each candidate exact / likely / possible with the reason; only the first two are used automatically. A failed query is reported as an error, never as "none". It is also the last automatic step when every other route failed. A preprint may differ from the published version; downloads are labelled as preprints. The institutional browser is always tried when the route calls for it.
 
 ## Install and run
 
