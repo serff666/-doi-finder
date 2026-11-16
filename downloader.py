@@ -22,6 +22,7 @@ import browser
 import elsevier
 import wiley
 import routing
+import preprints
 
 DEFAULT_TEMPLATE = "{first_author}_{year}_{title}"
 INDEX_NAME = ".doi-index.json"
@@ -38,39 +39,6 @@ _BAD = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 INST_MIN_INTERVAL = 3.0
 _inst_lock = threading.Lock()
 _inst_last = [0.0]
-
-# If the institutional session cannot get through for one publisher, it will
-# not get through for the next twenty either — the institution simply does not
-# subscribe. Two consecutive failures per DOI prefix sideline the browser step
-# for the rest of the batch instead of paying 90 s per article.
-INST_FAIL_LIMIT = 3
-_inst_fails: dict[str, int] = {}
-_inst_fails_lock = threading.Lock()
-
-
-def _inst_prefix(doi: str) -> str:
-    return (doi or "").split("/")[0]
-
-
-def _inst_skip(doi: str) -> bool:
-    with _inst_fails_lock:
-        return _inst_fails.get(_inst_prefix(doi), 0) >= INST_FAIL_LIMIT
-
-
-def _inst_note(doi: str, ok: bool) -> None:
-    p = _inst_prefix(doi)
-    with _inst_fails_lock:
-        if ok:
-            _inst_fails.pop(p, None)
-        else:
-            _inst_fails[p] = _inst_fails.get(p, 0) + 1
-
-
-def reset_inst_breaker() -> None:
-    """Called at the start of each batch so one bad run cannot poison the next."""
-    with _inst_fails_lock:
-        _inst_fails.clear()
-
 
 def _inst_gate() -> None:
     """Serialise institutional fetches and keep at least INST_MIN_INTERVAL apart."""
@@ -302,6 +270,39 @@ def _try_scihub(doi: str, conf: dict, should_stop=None) -> tuple[bytes | None, s
 
 DEADLINE_PER_DOI = 240  # seconds; past this no further source is started for the DOI
 
+# Direct PDF links a finder already knows (ChemRxiv's own search returns them), so the download
+# does not have to rediscover them.  Keyed by lower-case DOI.
+_PDF_HINTS: dict[str, str] = {}
+
+
+def register_pdf_hint(doi: str, url: str) -> None:
+    if doi and url:
+        _PDF_HINTS[doi.strip().lower()] = url
+
+
+def fetch_preprint(pick: dict, profile: str = "", timeout: float = 75.0) -> tuple[bytes | None, str, str]:
+    """PDF bytes of a preprint candidate (from preprints.find): the direct link if the search gave
+    one, then the DOI landing page, then a real browser (ChemRxiv sits behind a JS challenge)."""
+    errs = []
+    for u in [pick.get("pdf_url"), "https://doi.org/" + urllib.parse.quote(pick["doi"], safe="/()")]:
+        if not u:
+            continue
+        data, err, resolved = fetch_pdf(u)
+        if data:
+            return data, "", resolved or u
+        errs.append(err)
+    if browser.find_browser():
+        try:
+            prof = profile or os.path.join(platform_util.data_dir(), "browser-profile" + browser.browser_tag())
+            data, err, burl = browser.fetch_pdf(pick.get("pdf_url") or pick["doi"], prof,
+                                                timeout=max(60.0, timeout))
+        except Exception as e:  # noqa: BLE001
+            data, err, burl = None, f"{type(e).__name__}: {e}", ""
+        if data:
+            return data, "", burl or ("https://doi.org/" + pick["doi"])
+        errs.append(err or "浏览器没拿到 PDF")
+    return None, next((e for e in errs if e), "没拿到 PDF"), ""
+
 
 def download_one(doi: str, dest: str, email: str, template: str,
                  index: dict, force: bool = False, scihub_conf: dict | None = None,
@@ -373,6 +374,10 @@ def download_one(doi: str, dest: str, email: str, template: str,
         # DOI 本身就指向出版社落地页，OA 文章在那页上直接给出 citation_pdf_url。
         oa_cache.insert(0, {"url": "https://doi.org/" + urllib.parse.quote(doi, safe="/()"),
                             "source": "DOI 落地页"})
+        hint = _PDF_HINTS.get(doi)          # a link the finder already holds beats rediscovering it
+        if hint:
+            oa_cache.insert(0, {"url": hint, "source": "ChemRxiv"})
+            oa_real += 1
         return oa_cache
 
     errors: list[str] = []
@@ -396,16 +401,6 @@ def download_one(doi: str, dest: str, email: str, template: str,
     conf = scihub_conf or {}
     inst = inst_conf or {}
     use_inst = bool(inst.get("enabled") and inst.get("profile"))
-    if use_inst:
-        # 用户标过的"这家没权限"直接跳过，不再白开浏览器等挑战页
-        try:
-            import entitlements
-            why = entitlements.skip_reason(doi, (meta or {}).get("issn", ""))
-        except Exception:  # noqa: BLE001
-            why = ""
-        if why:
-            use_inst = False
-            errors.append(f"机构通道：{why}")
     if use_inst and not browser.find_browser():
         use_inst = False
         errors.append("机构通道：没有找到 Chrome / Edge")
@@ -441,13 +436,9 @@ def download_one(doi: str, dest: str, email: str, template: str,
     def try_inst() -> dict | None:
         if not use_inst:
             return None
-        if _inst_skip(doi):
-            errors.append(f"机构通道：该出版社连续失败，本批次已跳过（{_inst_prefix(doi)}）")
-            return None
         say("用已登录的浏览器打开出版社页面…")
         _inst_gate()
-        # 网络慢不等于没权限：先按原超时试一次，失败再用双倍超时重试一次，
-        # 两次都拿不到才计入"该出版社连续失败"。
+        # 网络慢不等于没权限：先按原超时试一次，失败再用双倍超时重试一次。
         base_timeout = float(inst.get("timeout") or 75)
         data, ierr, iurl = None, "", ""
         for attempt, tmo in enumerate((base_timeout, base_timeout * 2), 1):
@@ -457,7 +448,6 @@ def download_one(doi: str, dest: str, email: str, template: str,
                 break
             if attempt == 1:
                 say(f"机构通道第一遍没拿到，加倍超时重试（{int(tmo * 2)} 秒）…")
-        _inst_note(doi, bool(data))
         nonlocal page_hint
         page_hint = iurl or page_hint
         if not data:
@@ -542,6 +532,41 @@ def download_one(doi: str, dest: str, email: str, template: str,
             errors.append("ResearchGate：" + (err or "没拿到"))
             return None
         return {"data": data, "source": "ResearchGate", "url": url}
+
+    def try_preprint() -> dict | None:
+        """The journal version could not be had: look for the same paper on ChemRxiv.
+
+        Title and DOI usually differ, so this matches on the journal record's own link to the
+        preprint, else on title + first author + year.  Only a confident match is used, and the
+        source label says it is the preprint, because it may differ from the published text."""
+        if routing.family(doi) == "preprint":
+            return None
+        title = rec["title"]
+        if not title:
+            errors.append("ChemRxiv：没有标题可查")
+            return None
+        say("正式版没拿到，去 ChemRxiv 找同一篇的预印本…")
+        try:
+            import doi_engine as _de
+            found = preprints.find(title, doi=doi, first_author=meta.get("first_author") or "",
+                                   year=meta.get("year"), http=_de.Http(email))
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"ChemRxiv：查询出错（{type(e).__name__}），可重试")
+            return None
+        pick = preprints.best_auto(found)
+        if not pick:
+            if found.get("error"):
+                errors.append("ChemRxiv：没连上，可重试（" + found["error"][:80] + "）")
+            elif found.get("candidates"):
+                errors.append("ChemRxiv：有相似记录但把握不够，没有自动采用（到「预印本」页面自己看）")
+            else:
+                errors.append("ChemRxiv：没有找到同一篇的预印本")
+            return None
+        data, purl, perr = fetch_preprint(pick, inst.get("profile") or "", float(inst.get("timeout") or 75))
+        if not data:
+            errors.append(f"ChemRxiv 预印本 {pick['doi']}：{perr or '没拿到 PDF'}")
+            return None
+        return {"data": data, "source": f"ChemRxiv 预印本 {pick['doi']}（{pick['why']}）", "url": purl}
 
     def try_arxiv() -> dict | None:
         """正式版拿不到时，回头找同一篇的 arXiv 预印本。"""
@@ -629,13 +654,16 @@ def download_one(doi: str, dest: str, email: str, template: str,
             return rec
         if got:
             return finish(got)
-        if (name == "browser" and routing.family(doi) == "subscription"
-                and routing.is_recent(meta.get("year"))):
-            # A 2025 ACS/Science/Nature paper that the institution cannot open
-            # has no other source: the OA graph will return 403s for another
-            # minute and Sci-Hub does not carry it. Stop paying for that.
-            errors.append("机构通道未获取到，订阅刊新文无其他可用来源")
-            break
+
+    # Last resort, after every route to the journal version: the preprint.  It is cheap (a few
+    # HTTP calls), so it runs even when the per-paper time budget is spent; only Stop ends it.
+    if not stopped():
+        got = try_preprint()
+        if got:
+            return finish(got)
+    if stopped():
+        rec.update({"status": "stopped", "note": "已停止"})
+        return rec
 
     # A dead end the user can actually fix is worth naming precisely. Elsevier
     # sits behind a challenge no automated client passes, but its API does not.
@@ -669,7 +697,6 @@ def download_many(dois: list[str], dest: str, email: str = "", template: str = D
                   folders: dict | None = None) -> list[dict]:
     """Download a batch. workers>1 runs several DOIs at once, results stay in order."""
     os.makedirs(dest, exist_ok=True)
-    reset_inst_breaker()
     folders = folders or {}
     indexes: dict[str, dict] = {}
     lock = threading.Lock()

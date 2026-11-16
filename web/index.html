@@ -50,6 +50,7 @@
     <button data-tab="archive" type="button">⑦ 归档</button>
     <button data-tab="lab" type="button">⑧ 网页文献</button>
         <button data-tab="journaldl" type="button">⑨ 期刊文库</button>
+    <button data-tab="preprint" type="button">⑩ 预印本</button>
   </nav>
 
   <!-- ============================================================ 1. lookup -->
@@ -278,6 +279,7 @@ https://doi.org/10.1073/pnas.2321668121"></textarea>
             <input type="checkbox" id="onlyMissing"> 只看未获取
           </label>
           <button class="btn" id="exportMissing" disabled type="button">⇩ 未获取清单</button>
+          <button class="btn" id="missingToPreprint" disabled type="button" title="把没下到的 DOI 送到「⑩ 预印本」页，找同一篇的预印本">找预印本版本</button>
           <button class="btn" id="exportTask" disabled type="button">⇩ 保存任务</button>
           <button class="btn" id="importTask" type="button">⇧ 导入任务</button>
           <input type="file" id="taskPicker" accept=".json,.csv,application/json,text/csv" hidden>
@@ -539,27 +541,39 @@ https://doi.org/10.1073/pnas.2321668121"></textarea>
         <span class="aux" id="jdDest"></span>
       </div>
 
-      <div id="jdPanel" class="run-panel" hidden role="status" aria-live="polite">
-        <div class="run-head">
-          <strong id="jdRunTitle"></strong>
-          <span class="run-btns">
-            <button class="btn" id="jdPause" type="button" hidden>暂停</button>
-            <button class="btn danger" id="jdStop" type="button" hidden>停止</button>
-            <button class="btn primary" id="jdRetry" type="button" hidden></button>
-            <button class="btn" id="jdOpenDir" type="button" hidden>打开下载目录</button>
-          </span>
-        </div>
-        <div class="progress"><div class="bar" id="jdBarFill"></div></div>
-        <div class="aux" id="jdProg"></div>
-        <div class="aux" id="jdCurrent"></div>
-      </div>
+      <div id="jdSlot"></div>
 
       <div id="jdList"></div>
 
-      <details id="jdResultsWrap" hidden>
-        <summary>下载明细</summary>
-        <div id="jdResults"></div>
-      </details>
+    </section>
+  </section>
+
+  <!-- ============================================================ 10. preprints -->
+  <section class="tabpanel" id="tab-preprint" hidden>
+    <section class="panel">
+      <div class="section-title"><h2>预印本（ChemRxiv）</h2><span class="tiny-tag">正式版下不到时，找同一篇的预印本</span></div>
+      <p class="aux" style="margin:4px 0 12px">预印本的标题和 DOI 常常和正式版不一样。这里每行填一个<b>论文标题</b>或<b>期刊版 DOI</b>，
+        软件用期刊记录里登记的预印本链接、标题、第一作者和年份去对，并写明每条是怎么对上的。
+        预印本可能和正式版内容有出入，请自己核对。</p>
+      <label for="ppInput" class="sr">每行一个标题或 DOI</label>
+      <textarea id="ppInput" spellcheck="false" placeholder="每行一个：论文标题，或期刊版 DOI（10.xxxx/...）"></textarea>
+      <div class="actions">
+        <button class="btn primary" id="ppFind" type="button">查找预印本</button>
+        <button class="btn" id="ppRetryFind" type="button" hidden></button>
+      </div>
+      <div id="ppFeedback" class="feedback"></div>
+      <div class="searchbar-actions">
+        <span id="ppCount" class="aux">尚未查找</span>
+        <span class="spacer"></span>
+        <button class="btn sm" id="ppPickGood" disabled type="button">选中有把握的</button>
+        <button class="btn sm" id="ppNone" disabled type="button">取消全选</button>
+        <button class="btn sm primary" id="ppDownload" disabled type="button">下载选中的预印本</button>
+      </div>
+      <div id="ppRoot">
+        <div class="empty"><div class="empty-symbol">⌕</div>
+          <strong>预印本查找结果会显示在这里</strong>
+          <p>「有把握」= 期刊记录登记了这篇预印本，或标题、作者、年份都对得上；「待核对」只是相似，默认不勾选。</p></div>
+      </div>
     </section>
   </section>
 </main>

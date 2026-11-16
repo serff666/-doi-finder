@@ -493,8 +493,7 @@ window.addEventListener("unhandledrejection", (e) => {
   $("toDownload").addEventListener("click", () => {
     const dois = state.lookupRows.filter((r) => r.doi).map((r) => r.doi);
     if (!dois.length) return toast("没有可下载的 DOI");
-    addDois(dois);
-    showTab("download");
+    dlHere("lk", $("toDownload"), dois);
   });
 
   /* ================================================================ 2. DOI → PDF */
@@ -543,6 +542,8 @@ window.addEventListener("unhandledrejection", (e) => {
     const rows = state.downloadRows;
     const c = (s) => rows.filter((r) => r.status === s).length;
     const nf = failedDownloadDois().length;
+    const mb = $("missingToPreprint");
+    if (mb) mb.disabled = !rows.some((r) => !["downloaded", "exists", "pending"].includes(r.status) && r.doi);
     $("retryDownload").hidden = !nf || state.dlBusy;
     $("retryDownload").textContent = `↻ 重试 ${nf} 个失败的`;
     $("dlTotal").textContent = rows.length || parseDois($("dois").value).length;
@@ -620,9 +621,9 @@ window.addEventListener("unhandledrejection", (e) => {
   });
 
   // 重试：失败、被停止、没轮到的行；“无开放获取 / 需订阅”是确定的结果，不算失败
-  const DL_RETRY = ["failed", "stopped", "pending"];
+  const DL_RETRY_TAB = ["failed", "stopped", "pending"];
   function failedDownloadDois() {
-    return [...new Set(state.downloadRows.filter((r) => DL_RETRY.includes(r.status) && r.doi)
+    return [...new Set(state.downloadRows.filter((r) => DL_RETRY_TAB.includes(r.status) && r.doi)
       .map((r) => r.doi))];
   }
   $("startDownload").addEventListener("click", () => {
@@ -1001,8 +1002,7 @@ window.addEventListener("unhandledrejection", (e) => {
   $("searchToDownload").addEventListener("click", () => {
     const dois = [...state.selected.search].map((i) => state.searchRows[i] && state.searchRows[i].doi).filter(Boolean);
     if (!dois.length) return toast("选中项里没有 DOI");
-    addDois(dois);
-    showTab("download");
+    dlHere("sr", $("searchToDownload"), dois);
   });
 
   /* ================================================================ 4. ChemASAP */
@@ -1058,8 +1058,7 @@ window.addEventListener("unhandledrejection", (e) => {
   $("chemToDownload").addEventListener("click", () => {
     const dois = [...state.selected.chem].map((i) => state.chemRows[i] && state.chemRows[i].doi).filter(Boolean);
     if (!dois.length) return toast("选中项里没有 DOI");
-    addDois(dois);
-    showTab("download");
+    dlHere("cx", $("chemToDownload"), dois);
   });
 
   /* ================================================================ settings + boot */
@@ -1082,8 +1081,7 @@ window.addEventListener("unhandledrejection", (e) => {
   });
   $("baiduToDownload").addEventListener("click", () => {
     if (!state.baiduDoi) return;
-    addDois([state.baiduDoi]);
-    showTab("download");
+    dlHere("lk", $("toDownload"), [state.baiduDoi]);
   });
 
   async function loadSettings() {
@@ -1204,6 +1202,219 @@ window.addEventListener("unhandledrejection", (e) => {
     $("statusText").textContent = "已退出，可以关闭此页面";
     $("dot").className = "green-dot down";
   });
+
+  /* ================================================================ shared: in-page download panel
+   Every page that can download PDFs owns one panel (progress bar, counts, current paper, pause /
+   resume, stop, "retry the unfinished", details), so nothing has to jump to tab ② to download. */
+  const DL_RETRY = ["failed", "error", "stopped", "pending"];       // "invalid" cannot be fixed by retrying
+
+  function downloadBody(dois, extra) {
+    return Object.assign({
+      dois, dir: $("dlDir").value.trim(), email: $("email").value.trim(),
+      template: $("dlTemplate") ? $("dlTemplate").value.trim() : "",
+      force: false,
+      workers: Number(($("dlWorkers") && $("dlWorkers").value) || 3),
+      scihub: $("scihubEnable") ? $("scihubEnable").checked : true,
+      mirrors: $("scihubMirrors") ? $("scihubMirrors").value.trim() : "",
+      inst: $("instEnable") ? $("instEnable").checked : undefined,
+      login_url: $("instLoginUrl") ? $("instLoginUrl").value.trim() : "",
+    }, extra || {});
+  }
+
+  function makeDlPanel(prefix, slot, opts) {
+    opts = opts || {};
+    const P = (n) => prefix + n;
+    slot.innerHTML = `<div id="${P("Panel")}" class="run-panel" hidden role="status" aria-live="polite">
+        <div class="run-head">
+          <strong id="${P("RunTitle")}"></strong>
+          <span class="run-btns">
+            <button class="btn" id="${P("Pause")}" type="button" hidden>暂停</button>
+            <button class="btn danger" id="${P("Stop")}" type="button" hidden>停止</button>
+            <button class="btn primary" id="${P("Retry")}" type="button" hidden></button>
+            <button class="btn" id="${P("OpenDir")}" type="button" hidden>打开下载目录</button>
+          </span>
+        </div>
+        <div class="progress"><div class="bar" id="${P("BarFill")}"></div></div>
+        <div class="aux" id="${P("Prog")}"></div>
+        <div class="aux" id="${P("Current")}"></div>
+      </div>
+      <details id="${P("ResultsWrap")}" hidden><summary>下载明细</summary><div id="${P("Results")}"></div></details>`;
+    const G = (n) => document.getElementById(P(n));
+    const S = { rows: new Map(), picked: [], busy: false, job: "", paused: false, dest: "", build: null };
+    const OKS = ["downloaded", "exists"], NOOA = ["no_oa", "blocked"];
+    const key = (d) => String(d).toLowerCase();
+
+    function setBusy(on) {
+      S.busy = on;
+      if (opts.onBusy) opts.onBusy(on);
+    }
+    function failedList() {
+      return S.picked.filter((x) => { const r = S.rows.get(key(x.doi)); return !r || DL_RETRY.includes(r.status); });
+    }
+    function render(total, d) {
+      const rows = [...S.rows.values()];
+      const c = (list) => rows.filter((r) => list.includes(r.status)).length;
+      const ok = c(OKS), no = c(NOOA), bad = c(["failed", "invalid", "error"]);
+      const done = ok + no + bad;
+      G("BarFill").style.width = (total ? Math.round(100 * done / total) : 0) + "%";
+      G("Prog").textContent = `已处理 ${done} / ${total} · ✓ 成功 ${ok} · 无开放获取/需订阅 ${no} · ✗ 失败 ${bad}`;
+      G("Current").textContent = d && d.state === "running" && d.current ? "当前：" + d.current : "";
+      if (rows.length) {
+        G("ResultsWrap").hidden = false;
+        G("Results").innerHTML = `<div class="results-scroll"><table class="results-table">
+          <thead><tr><th>DOI</th><th>状态</th><th>文件 / 说明</th></tr></thead>
+          <tbody>${rows.map((x) => `<tr>
+            <td>${esc(x.doi || "")}</td>
+            <td>${esc((DL_STATUS[x.status] || [x.status])[0])}</td>
+            <td class="aux">${esc(x.file || x.note || "")}</td></tr>`).join("")}</tbody></table></div>`;
+      }
+      return { ok, no, bad, done, failed: failedList().length };
+    }
+    function buttons(running) {
+      setBusy(running);
+      G("Pause").hidden = !running; G("Stop").hidden = !running;
+      if (running) { S.paused = false; G("Pause").textContent = "暂停"; G("Pause").disabled = true; G("Stop").disabled = true; }
+      const n = running ? 0 : failedList().length;
+      G("Retry").hidden = !n;
+      G("Retry").textContent = `↻ 重试 ${n} 个没完成的`;
+      G("OpenDir").hidden = running || !S.dest;
+    }
+
+    async function run(picked, isRetry) {
+      const body = S.build(picked);
+      S.dest = body.dir || ($("dlDir") ? $("dlDir").value.trim() : "");
+      const total = S.picked.length;
+      const redo = new Set(picked.map((x) => key(x.doi)));
+      redo.forEach((k) => S.rows.delete(k));                 // being redone now
+      G("Panel").hidden = false;
+      G("Panel").classList.remove("done", "bad");
+      G("RunTitle").textContent = isRetry ? `正在重试 ${picked.length} 篇…` : `正在下载 ${picked.length} 篇…`;
+      buttons(true);
+      render(total, null);
+      G("Panel").scrollIntoView({ block: "nearest", behavior: "smooth" });
+      try {
+        const r = await api("/api/download", body);
+        S.job = r.job_id;
+        G("Pause").disabled = false; G("Stop").disabled = false;
+        const merge = (d) => (d.results || []).forEach((x) => {
+          if (x && x.doi && redo.has(key(x.doi))) S.rows.set(key(x.doi), x);
+        });
+        pollJob(r.job_id, (d) => {
+          merge(d);
+          render(total, d);
+          if (d.state === "running") {
+            G("RunTitle").textContent = d.paused ? "⏸ 已暂停（当前这篇结束后停住，点继续恢复）"
+              : (isRetry ? "正在重试… " : "正在下载… ") + `${d.done || 0} / ${d.total || picked.length}`;
+            S.paused = !!d.paused;
+            G("Pause").textContent = S.paused ? "继续" : "暂停";
+          }
+        }, (d) => {
+          merge(d);
+          const t = render(total, d);
+          buttons(false);
+          if (d.state === "error") {
+            G("Panel").classList.add("bad");
+            G("RunTitle").textContent = `✗ 下载中断：${d.error || "未知错误"}。已完成的保留，点重试继续剩下的`;
+          } else if (d.state === "stopped" || d.cancelled) {
+            G("RunTitle").textContent = `已停止 · 完成 ${t.done} / ${total}，剩 ${t.failed} 篇没做，点重试继续`;
+          } else {
+            G("Panel").classList.add(t.failed || t.bad ? "bad" : "done");
+            G("RunTitle").textContent = t.failed
+              ? `下载结束，但还有 ${t.failed} 篇没成功（${t.bad} 篇失败）`
+              : t.bad ? `下载结束：${t.bad} 篇的 DOI 格式无效，其余已处理（成功 ${t.ok}，无开放获取/需订阅 ${t.no}）`
+              : `✓ 下载完成：共 ${total} 篇，成功 ${t.ok}，无开放获取/需订阅 ${t.no}`;
+          }
+          if (opts.onDone) opts.onDone(S.rows, t);
+        });
+      } catch (e) {
+        G("Panel").classList.add("bad");
+        G("RunTitle").textContent = "✗ 没有开始：" + e.message + "。点右边的重试即可";
+        render(total, null);
+        buttons(false);
+      }
+    }
+
+    G("Retry").addEventListener("click", () => {
+      if (S.busy) return;
+      const todo = failedList();
+      if (!todo.length) return toast("没有需要重试的");
+      run(todo, true);
+    });
+    G("Pause").addEventListener("click", async () => {
+      if (!S.job) return;
+      const resume = S.paused;          // not read from the button text: the EN switch rewrites it
+      G("Pause").disabled = true;
+      try {
+        const r = await api(`/api/${resume ? "resume" : "pause"}/${S.job}`, {});
+        S.paused = !!r.paused;
+        G("Pause").textContent = S.paused ? "继续" : "暂停";
+      } catch (e) { toast("操作失败：" + e.message); }
+      G("Pause").disabled = false;
+    });
+    G("Stop").addEventListener("click", async () => {
+      if (!S.job) return;
+      G("Stop").disabled = true;
+      G("RunTitle").textContent = "正在停止…（当前这篇查完就停）";
+      try { await api(`/api/stop/${S.job}`, {}); } catch (e) { toast("停止失败：" + e.message); G("Stop").disabled = false; }
+    });
+    G("OpenDir").addEventListener("click", () =>
+      api("/api/open-folder", { path: S.dest || $("dlDir").value.trim() }).catch((e) => toast(e.message)));
+
+    return {
+      get busy() { return S.busy; },
+      get rows() { return S.rows; },
+      /** picked: [{doi, ...}] (duplicates dropped); build(subset) -> POST body for /api/download */
+      start(picked, build) {
+        if (S.busy) return false;
+        const seen = new Set();
+        S.picked = picked.filter((x) => x && x.doi && !seen.has(key(x.doi)) && seen.add(key(x.doi)));
+        if (!S.picked.length) return false;
+        S.rows = new Map(); S.build = build;
+        run(S.picked, false);
+        return true;
+      },
+      /** a non-download job (book-list fetch, preprint search) shown in the same panel, with Stop */
+      beginTask(title) {
+        G("Panel").hidden = false; G("Panel").classList.remove("done", "bad");
+        G("RunTitle").textContent = title;
+        G("Prog").textContent = ""; G("Current").textContent = ""; G("BarFill").style.width = "0%";
+        G("ResultsWrap").hidden = true;
+        ["Pause", "Retry", "OpenDir"].forEach((n) => { G(n).hidden = true; });
+        G("Stop").hidden = false; G("Stop").disabled = true;
+        setBusy(true);
+      },
+      setJob(id) { S.job = id; G("Stop").disabled = false; },
+      taskProgress(title, frac) {
+        G("RunTitle").textContent = title;
+        if (typeof frac === "number") G("BarFill").style.width = Math.min(100, Math.round(100 * frac)) + "%";
+      },
+      endTask(title, bad) {
+        G("Stop").hidden = true;
+        G("Panel").classList.toggle("bad", !!bad); G("Panel").classList.toggle("done", !bad);
+        G("RunTitle").textContent = title;
+        G("BarFill").style.width = "100%";
+        setBusy(false);
+      },
+      reset() { if (S.busy) return; G("Panel").hidden = true; G("ResultsWrap").hidden = true; S.rows = new Map(); S.picked = []; },
+    };
+  }
+
+  const _dlPanels = {};
+  /** Download `dois` on the page that asked, with its own panel placed right under `anchor`'s toolbar. */
+  function dlHere(key, anchor, dois, extra) {
+    let p = _dlPanels[key];
+    if (!p) {
+      const slot = document.createElement("div");
+      const host = anchor.closest(".result-head, .searchbar-actions, .journal-main-head, .row") || anchor.parentElement;
+      host.parentNode.insertBefore(slot, host.nextSibling);
+      p = _dlPanels[key] = makeDlPanel(key, slot);
+    }
+    if (p.busy) { toast("这一页正在下载，请先等它结束或点停止"); return p; }
+    const list = (dois || []).filter(Boolean);
+    if (!list.length) { toast("没有可下载的 DOI"); return p; }
+    p.start(list.map((d) => ({ doi: d })), (subset) => downloadBody(subset.map((x) => x.doi), extra));
+    return p;
+  }
 
   function pollJob(jobId, onTick, onDone) {
     state.job = jobId;
@@ -1441,8 +1652,7 @@ window.addEventListener("unhandledrejection", (e) => {
     const items = state.journalItems.filter((it) => (!$("jOnlyNew").checked || (it.date || "") > seen) && kindOk(it));
     const dois = [...state.selected.journal].map((i) => items[i] && items[i].doi).filter(Boolean);
     if (!dois.length) return toast("没选中任何条目");
-    addDois(dois);
-    showTab("download");
+    dlHere("jf", $("jToDownload"), dois);
   });
 
   (async function initJournals() {
@@ -1542,9 +1752,8 @@ window.addEventListener("unhandledrejection", (e) => {
         state.lookupRows = rows;
         renderLookup();
         if (dois.length) {
-          addDois(dois);
-          feedback("rgFeedback", `解析完成：${dois.length} / ${rows.length} 条拿到 DOI，已加入下载队列`);
-          showTab("download");
+          feedback("rgFeedback", `解析完成：${dois.length} / ${rows.length} 条拿到 DOI，开始在本页下载`);
+          dlHere("rg", $("rgResolve"), dois);
         } else {
           feedback("rgFeedback", "这批标题都没匹配到 DOI", true);
         }
@@ -1726,22 +1935,166 @@ window.addEventListener("unhandledrejection", (e) => {
       if (!picked.length) { feedback("labFeedback", "没有选中条目", true); return; }
       const withDoi = picked.map((x) => x.doi).filter(Boolean);
       const without = picked.filter((x) => !x.doi && x.title).map((x) => x.title);
-      if (withDoi.length) addDois(withDoi);
       if (without.length) {
         const box = $("titles");
         box.value = without.join("\n");
         if (typeof countInput === "function") countInput();
-        showTab("lookup");
-        feedback("searchFeedback",
-          `${withDoi.length} 条已有 DOI，已放进下载队列；剩下 ${without.length} 条已填进这里，点「开始批量检索」解析`);
-      } else {
-        showTab("download");
-        feedback("dlFeedback", `${withDoi.length} 条 DOI 已放进下载队列`);
       }
+      feedback("labFeedback", (withDoi.length ? `${withDoi.length} 条有 DOI，已在本页开始下载` : "没有带 DOI 的条目")
+        + (without.length ? `；${without.length} 条只有标题，已填进「① 标题 → DOI」，需要时到那一页解析` : ""));
+      if (withDoi.length) dlHere("lb", $("labDownload"), withDoi);
       toast(`已处理 ${picked.length} 条`);
     });
   
 
+
+  // ---------------------------------------------------------------- 10. 预印本（ChemRxiv）
+  // 独立页面：查找 → 核对 → 勾选 → 在本页下载（进度、暂停、停止、重试都在本页）。
+  (() => {
+    const root = $("ppRoot");
+    if (!root) return;
+    const PP = { rows: [], sel: new Set() };
+    const LEVEL = { exact: ["有把握 · 期刊记录登记", "ok"], likely: ["有把握", "ok"], possible: ["待核对", "warn"] };
+    const ST = { found: ["找到", "ok"], none: ["没有", "pending"], error: ["查询失败", "bad"], stopped: ["未查", "pending"] };
+    const slot = document.createElement("div");
+    const bar = $("ppDownload").closest(".searchbar-actions");
+    bar.parentNode.insertBefore(slot, bar.nextSibling);
+    const dl = makeDlPanel("pp", slot, { onBusy: () => refresh() });
+
+    const failedIdx = () => PP.rows.map((r, i) => (["error", "stopped"].includes(r.status) ? i : -1)).filter((i) => i >= 0);
+    const setFb = (msg, bad) => feedback("ppFeedback", msg, !!bad);
+
+    function refresh() {
+      const busy = dl.busy;
+      const c = (st) => PP.rows.filter((r) => r.status === st).length;
+      $("ppCount").textContent = PP.rows.length
+        ? `${PP.rows.length} 条 · 找到 ${c("found")} · 没有 ${c("none")} · 查询失败 ${c("error")} · 已选 ${PP.sel.size} 个预印本`
+        : "尚未查找";
+      $("ppPickGood").disabled = busy || !PP.rows.some((r) => r.candidates.some((x) => x.level !== "possible"));
+      $("ppNone").disabled = busy || !PP.sel.size;
+      $("ppDownload").disabled = busy || !PP.sel.size;
+      $("ppFind").disabled = busy;
+      const n = busy ? 0 : failedIdx().length;
+      $("ppRetryFind").hidden = !n;
+      $("ppRetryFind").textContent = `↻ 重试 ${n} 条没查成的`;
+    }
+
+    function render() {
+      if (!PP.rows.length) { refresh(); return; }
+      root.innerHTML = PP.rows.map((r, i) => {
+        const st = ST[r.status] || [r.status, "pending"];
+        const sub = [r.first_author, r.year, r.doi].filter(Boolean).join(" · ");
+        let body = "";
+        if (r.status === "error") {
+          body = `<div class="aux">查询没成功：${esc(r.error || "")}。这不代表没有预印本，点上面的「重试」再查一次。</div>`;
+        } else if (r.status === "stopped") {
+          body = `<div class="aux">已停止，这条没查。点上面的「重试」继续。</div>`;
+        } else if (!r.candidates.length) {
+          body = `<div class="aux">没有找到预印本（已查 ChemRxiv 官方搜索和 Crossref）。</div>`;
+        } else {
+          body = `<table class="results-table"><tbody>${r.candidates.map((c) => {
+            const lv = LEVEL[c.level] || [c.level, "pending"];
+            return `<tr>
+              <td class="checkcell"><input type="checkbox" data-pp="${esc(c.doi)}" ${PP.sel.has(c.doi) ? "checked" : ""}></td>
+              <td><div class="rowtitle">${esc(c.title)}</div>
+                <div class="aux">${esc((c.authors || []).slice(0, 4).join(", "))}${c.year ? " · " + esc(c.year) : ""}</div></td>
+              <td><a class="doi-link" href="${esc(c.url)}" target="_blank" rel="noopener noreferrer">${esc(c.doi)}</a></td>
+              <td><span class="pill ${lv[1]}">${esc(lv[0])}</span><div class="aux">${esc(c.why || "")}</div></td></tr>`;
+          }).join("")}</tbody></table>`;
+        }
+        return `<div class="pp-row">
+          <div class="pp-head"><span class="pill ${st[1]}">${esc(st[0])}</span>
+            <b>${esc(r.title || r.input || "")}</b> <span class="aux">${esc(sub)}</span></div>${body}</div>`;
+      }).join("");
+      refresh();
+    }
+
+    root.addEventListener("change", (e) => {
+      const cb = e.target.closest("[data-pp]");
+      if (!cb) return;
+      if (cb.checked) PP.sel.add(cb.dataset.pp); else PP.sel.delete(cb.dataset.pp);
+      refresh();
+    });
+    $("ppPickGood").addEventListener("click", () => {
+      PP.sel = new Set();
+      PP.rows.forEach((r) => { if (r.auto) PP.sel.add(r.auto); });
+      render();
+    });
+    $("ppNone").addEventListener("click", () => { PP.sel = new Set(); render(); });
+
+    // lines: what to send; idx: null for a fresh search, else the row positions being retried
+    async function runFind(lines, idx) {
+      const isRetry = !!idx;
+      if (!isRetry) { PP.rows = []; PP.sel = new Set(); render(); dl.reset(); }
+      dl.beginTask(isRetry ? `正在重试 ${lines.length} 条…` : `正在查找预印本（共 ${lines.length} 条）…`);
+      setFb("");
+      const end = (title, bad) => { dl.endTask(title, bad); render(); };
+      try {
+        const r = await api("/api/preprint/find", { text: lines.join("\n"), email: $("email").value.trim() });
+        dl.setJob(r.job_id);
+        pollJob(r.job_id, (d) => {
+          dl.taskProgress(`${isRetry ? "正在重试" : "正在查找预印本"}… ${d.done || 0} / ${d.total || lines.length}`,
+            d.total ? (d.done || 0) / d.total : 0);
+        }, (d) => {
+          const res = d.results || [];
+          if (d.state === "error" && !res.length) {
+            return end(`✗ 查找中断：${d.error || "未知错误"}。输入还在，点「重试」或再点「查找预印本」`, true);
+          }
+          if (isRetry) {
+            if (res.length !== idx.length) {
+              return end("✗ 重试结果和原来的行对不上，表格保持原样，可以再点一次重试", true);
+            }
+            idx.forEach((i, k) => {
+              PP.rows[i] = Object.assign({}, res[k], { n: PP.rows[i].n });
+              if (PP.rows[i].auto) PP.sel.add(PP.rows[i].auto);
+            });
+          } else {
+            PP.rows = res;
+            PP.rows.forEach((x) => { if (x.auto) PP.sel.add(x.auto); });
+          }
+          const f = failedIdx().length;
+          const found = PP.rows.filter((x) => x.status === "found").length;
+          if (d.state === "stopped") return end(`已停止，有 ${f} 条没查，点「重试」继续`, false);
+          end(f ? `查完了，但有 ${f} 条没查成，点「重试」再查一次`
+                : `✓ 查找完成：${PP.rows.length} 条里 ${found} 条找到了预印本，已勾选有把握的，核对后点「下载选中的预印本」`, f > 0);
+        });
+      } catch (e) {
+        end("✗ 没有开始：" + e.message + "。再点一次即可", true);
+      }
+    }
+
+    $("ppFind").addEventListener("click", () => {
+      if (dl.busy) return;
+      const lines = $("ppInput").value.split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
+      if (!lines.length) { setFb("请先填入至少一行标题或 DOI。", true); $("ppInput").focus(); return; }
+      runFind(lines, null);
+    });
+    $("ppRetryFind").addEventListener("click", () => {
+      if (dl.busy) return;
+      const idx = failedIdx();
+      if (!idx.length) return toast("没有需要重试的");
+      runFind(idx.map((i) => PP.rows[i].input || PP.rows[i].title), idx);
+    });
+    $("ppDownload").addEventListener("click", () => {
+      if (dl.busy) return;
+      const dois = [...PP.sel];
+      if (!dois.length) return toast("还没有勾选预印本");
+      dl.start(dois.map((d) => ({ doi: d })), (subset) => downloadBody(subset.map((x) => x.doi)));
+    });
+
+    // 从「② DOI → PDF」送来没下到的 DOI：切到本页，填好，由用户点查找
+    $("missingToPreprint").addEventListener("click", () => {
+      const dois = state.downloadRows.filter((r) => !["downloaded", "exists", "pending"].includes(r.status) && r.doi)
+        .map((r) => r.doi);
+      if (!dois.length) return toast("没有未获取的条目");
+      const have = new Set($("ppInput").value.split(/\r?\n/).map((x) => x.trim().toLowerCase()));
+      $("ppInput").value = ($("ppInput").value.trim() ? $("ppInput").value.trim() + "\n" : "")
+        + [...new Set(dois)].filter((d) => !have.has(d.toLowerCase())).join("\n");
+      showTab("preprint");
+      setFb(`已填入 ${dois.length} 个没下到的 DOI，点「查找预印本」`);
+    });
+    refresh();
+  })();
 
   // ---------------------------------------------------------------- 9. 期刊文库
   // 独立的整刊回溯页：抓书目 → 勾选 → 按 刊名/年份/Volume 卷, Issue 期 下载。
@@ -1751,8 +2104,11 @@ window.addEventListener("unhandledrejection", (e) => {
     if (!run) return;
     const st = {
       rows: [], sel: new Set(), journal: "", dest: "",
-      job: "", dlJob: "",
+      job: "",
     };
+    const jdDl = makeDlPanel("jd", document.getElementById("jdSlot"), {
+      onBusy: (on) => { document.getElementById("jdDownload").disabled = on; },
+    });
 
     const setFb = (msg, bad) => feedback("jdFeedback", msg, !!bad);
     const ISSN_RE = /^\d{4}-?\d{3}[\dXx]$/;
@@ -1893,33 +2249,19 @@ window.addEventListener("unhandledrejection", (e) => {
       showInfo(issn, st.journal);
       const from = Number(document.getElementById("jdFrom").value || 0);
       const to = Number(document.getElementById("jdTo").value || 0);
-      if (st.jdBusy) { setFb("正在下载中，请先等它结束或点停止", true); return; }
+      if (jdDl.busy) { setFb("正在下载中，请先等它结束或点停止", true); return; }
       run.disabled = true;
       setFb("抓取中…每年一次请求，全量通常要十几分钟");
       const box = document.getElementById("jdList");
       box.innerHTML = `<div class="empty"><div class="empty-symbol">…</div><strong>正在抓取书目</strong>
         <p>逐年翻页，过程中列表会一段段出现。</p></div>`;
-      const panel = document.getElementById("jdPanel");
-      panel.hidden = false; panel.classList.remove("done", "bad");
-      document.getElementById("jdRunTitle").textContent = "正在抓取书目…";
-      document.getElementById("jdProg").textContent = "";
-      document.getElementById("jdCurrent").textContent = "";
-      document.getElementById("jdBarFill").style.width = "0%";
-      ["jdPause", "jdRetry", "jdOpenDir"].forEach((id) => { document.getElementById(id).hidden = true; });
-      document.getElementById("jdStop").hidden = false; document.getElementById("jdStop").disabled = false;
-      const harvestEnd = (title, bad) => {
-        document.getElementById("jdStop").hidden = true;
-        panel.classList.toggle("bad", !!bad); panel.classList.toggle("done", !bad);
-        document.getElementById("jdRunTitle").textContent = title;
-        document.getElementById("jdBarFill").style.width = "100%";
-      };
+      jdDl.beginTask("正在抓取书目…");
       api("/api/journal/harvest", { issn, year_from: from, year_to: to }).then((r) => {
-        st.job = r.job_id; st.activeJob = r.job_id;
+        st.job = r.job_id; jdDl.setJob(r.job_id);
         pollJob(r.job_id, (d) => {
           setFb(d.markdown || `已抓 ${d.done} 条`);
-          document.getElementById("jdRunTitle").textContent = `正在抓取书目… 已抓 ${d.done || 0} 条`
-            + (d.total && d.total > 1 ? `（${d.done || 0} / ${d.total}）` : "");
-          if (d.total > 1) document.getElementById("jdBarFill").style.width = Math.min(100, Math.round(100 * (d.done || 0) / d.total)) + "%";
+          jdDl.taskProgress(`正在抓取书目… 已抓 ${d.done || 0} 条` + (d.total && d.total > 1 ? `（${d.done || 0} / ${d.total}）` : ""),
+            d.total > 1 ? (d.done || 0) / d.total : undefined);
           if (d.items && d.items.length) {
             st.rows = d.items.filter((x) => x.doi);
             selectByKind();
@@ -1928,19 +2270,19 @@ window.addEventListener("unhandledrejection", (e) => {
         }, (d) => {
           run.disabled = false;
           if (d.state === "error") {
-            harvestEnd("✗ 抓取失败：" + (d.error || "未知错误") + "。再点一次「抓取书目」重试", true);
+            jdDl.endTask("✗ 抓取失败：" + (d.error || "未知错误") + "。再点一次「抓取书目」重试", true);
             setFb("抓取失败：" + (d.error || ""), true); return;
           }
           st.rows = d.items || [];
           selectByKind();
           drawList();
           const errs = (d.errors || []).length;
-          harvestEnd(d.state === "stopped" || d.cancelled
+          jdDl.endTask(d.state === "stopped" || d.cancelled
             ? `已停止，已抓到 ${st.rows.length} 篇（不完整）`
             : `✓ 抓取完成：共 ${st.rows.length} 篇，已按类型勾选 ${st.sel.size} 篇${errs ? `，有 ${errs} 次请求失败，结果可能不全，可再抓一次` : ""}`, errs > 0);
           setFb(`共 ${st.rows.length} 篇，已按类型勾选 ${st.sel.size} 篇${errs ? `，${errs} 次请求失败` : ""}`);
         });
-      }).catch((e) => { run.disabled = false; harvestEnd("✗ 抓取没有开始：" + e.message + "。再点一次「抓取书目」重试", true); setFb("抓取失败：" + e.message, true); });
+      }).catch((e) => { run.disabled = false; jdDl.endTask("✗ 抓取没有开始：" + e.message + "。再点一次「抓取书目」重试", true); setFb("抓取失败：" + e.message, true); });
     });
 
     document.getElementById("jdKind").addEventListener("change", () => { selectByKind(); drawList(); });
@@ -1953,154 +2295,27 @@ window.addEventListener("unhandledrejection", (e) => {
     document.getElementById("jdClear").addEventListener("click", () => {
       st.rows = []; st.sel = new Set();
       drawList();
-      document.getElementById("jdResultsWrap").hidden = true;
-      if (!st.jdBusy) { document.getElementById("jdPanel").hidden = true; st.jdRows = new Map(); st.jdPicked = []; }
+      jdDl.reset();
       setFb("");
     });
 
-    // ---- download: progress panel stays next to the button, with pause / stop / retry
+    // ---- download: the shared in-page panel (progress, pause / stop, retry the unfinished)
     const G = (id) => document.getElementById(id);
-    const OKS = ["downloaded", "exists"];
-    const NOOA = ["no_oa", "blocked"];
-    const RETRY = ["failed", "invalid", "error", "stopped", "pending"];
-    st.jdRows = new Map();
-    st.jdBusy = false;
-
-    function jdRender(total, d, extra) {
-      const rows = [...st.jdRows.values()];
-      const c = (list) => rows.filter((r) => list.includes(r.status)).length;
-      const ok = c(OKS), no = c(NOOA), bad = c(["failed", "invalid", "error"]);
-      const done = ok + no + bad;
-      G("jdBarFill").style.width = (total ? Math.round(100 * done / total) : 0) + "%";
-      G("jdProg").textContent = `已处理 ${done} / ${total} · ✓ 成功 ${ok}`
-        + ` · 无开放获取/需订阅 ${no} · ✗ 失败 ${bad}`;
-      G("jdCurrent").textContent = d && d.state === "running" && d.current ? "当前：" + d.current : "";
-      if (rows.length) {
-        G("jdResultsWrap").hidden = false;
-        G("jdResults").innerHTML = `<div class="results-scroll"><table class="results-table">
-          <thead><tr><th>DOI</th><th>状态</th><th>文件 / 说明</th></tr></thead>
-          <tbody>${rows.map((x) => `<tr>
-            <td>${esc(x.doi || "")}</td>
-            <td>${esc((DL_STATUS[x.status] || [x.status])[0])}</td>
-            <td class="aux">${esc(x.file || x.note || "")}</td></tr>`).join("")}</tbody></table></div>`;
-      }
-      return { ok, no, bad, done, failed: failedJd().length };
-    }
-    function failedJd() {
-      const have = st.jdRows;
-      return (st.jdPicked || []).filter((x) => {
-        const r = have.get(String(x.doi).toLowerCase());
-        return !r || RETRY.includes(r.status);
-      });
-    }
-    function jdButtons(running) {
-      st.jdBusy = running;
-      G("jdDownload").disabled = running;
-      G("jdPause").hidden = !running; G("jdStop").hidden = !running;
-      if (running) { st.jdPaused = false; G("jdPause").textContent = "暂停"; G("jdPause").disabled = true; G("jdStop").disabled = true; }   // enabled once the job id is known
-      const n = running ? 0 : failedJd().length;
-      G("jdRetry").hidden = !n;
-      G("jdRetry").textContent = `↻ 重试 ${n} 个没完成的`;
-      G("jdOpenDir").hidden = running || !st.jdDest;
-    }
-
-    async function runJd(picked, isRetry) {
-      const raw = (G("jdIssn").value || "").trim();
-      const journal = st.journal || (st.rows[0] && st.rows[0].journal) || raw;
-      const dest = ($("dlDir") && $("dlDir").value.trim()) || "";
-      if (!isRetry) { st.jdPicked = picked.slice(); st.jdRows = new Map(); }
-      st.jdDest = dest;
-      const total = st.jdPicked.length;
-      const redo = new Set(picked.map((x) => String(x.doi).toLowerCase()));
-      redo.forEach((k) => { if (st.jdRows.has(k)) st.jdRows.delete(k); });   // being redone now
-      G("jdPanel").hidden = false;
-      G("jdPanel").classList.remove("done", "bad");
-      G("jdRunTitle").textContent = isRetry ? `正在重试 ${picked.length} 篇…` : `正在下载 ${picked.length} 篇…`;
-      jdButtons(true);
-      jdRender(total, null);
-      setFb("");
-      G("jdPanel").scrollIntoView({ block: "nearest", behavior: "smooth" });
-      const fail = (msg) => {
-        G("jdPanel").classList.add("bad");
-        G("jdRunTitle").textContent = "✗ 没有开始：" + msg + "。点右边的重试即可";
-        jdRender(total, null);
-        jdButtons(false);
-      };
-      try {
-        const r = await api("/api/download", {
-          dois: picked.map((x) => x.doi),
-          dir: dest,
-          scihub: $("scihubEnable") ? $("scihubEnable").checked : true,
-          workers: Number(($("dlWorkers") && $("dlWorkers").value) || 3),
-          layout: {
-            journal,
-            items: picked.map((x) => ({ doi: x.doi, year: x.year, volume: x.volume, issue: x.issue })),
-          },
-        });
-        st.activeJob = r.job_id;
-        G("jdPause").disabled = false; G("jdStop").disabled = false;
-        const merge = (d) => (d.results || []).forEach((x) => {
-          if (x && x.doi && redo.has(String(x.doi).toLowerCase())) st.jdRows.set(String(x.doi).toLowerCase(), x);
-        });
-        pollJob(r.job_id, (d) => {
-          merge(d);
-          jdRender(total, d);
-          if (d.state === "running") {
-            G("jdRunTitle").textContent = d.paused ? "⏸ 已暂停（当前这篇结束后停住，点继续恢复）"
-              : (isRetry ? "正在重试… " : "正在下载… ") + `${d.done || 0} / ${d.total || picked.length}`;
-            st.jdPaused = !!d.paused;
-            G("jdPause").textContent = st.jdPaused ? "继续" : "暂停";
-          }
-        }, (d) => {
-          merge(d);
-          const t = jdRender(total, d);
-          jdButtons(false);
-          if (d.state === "error") {
-            G("jdPanel").classList.add("bad");
-            G("jdRunTitle").textContent = `✗ 下载中断：${d.error || "未知错误"}。已完成的保留，点重试继续剩下的`;
-          } else if (d.state === "stopped" || d.cancelled) {
-            G("jdRunTitle").textContent = `已停止 · 完成 ${t.done} / ${total}，剩 ${t.failed} 篇没做，点重试继续`;
-          } else {
-            G("jdPanel").classList.add(t.failed ? "bad" : "done");
-            G("jdRunTitle").textContent = t.failed
-              ? `下载结束，但还有 ${t.failed} 篇没成功（${t.bad} 篇失败）`
-              : `✓ 下载完成：共 ${total} 篇，成功 ${t.ok}，无开放获取/需订阅 ${t.no}`;
-          }
-        });
-      } catch (e) { fail(e.message); }
-    }
-
     G("jdDownload").addEventListener("click", () => {
-      if (st.jdBusy) return;
+      if (jdDl.busy) return;
       const picked = [...st.sel].map((i) => st.rows[i]).filter((x) => x && x.doi);
       if (!picked.length) { setFb("没有选中条目", true); return; }
-      runJd(picked, false);
+      setFb("");
+      const journal = st.journal || (st.rows[0] && st.rows[0].journal) || (G("jdIssn").value || "").trim();
+      const meta = new Map(picked.map((x) => [String(x.doi).toLowerCase(), x]));
+      jdDl.start(picked, (subset) => downloadBody(subset.map((x) => x.doi), {
+        layout: {
+          journal,
+          items: subset.map((x) => { const m = meta.get(String(x.doi).toLowerCase()) || x;
+            return { doi: m.doi, year: m.year, volume: m.volume, issue: m.issue }; }),
+        },
+      }));
     });
-    G("jdRetry").addEventListener("click", () => {
-      if (st.jdBusy) return;
-      const todo = failedJd();
-      if (!todo.length) return toast("没有需要重试的");
-      runJd(todo, true);
-    });
-    G("jdPause").addEventListener("click", async () => {
-      if (!st.activeJob) return;
-      const resume = !!st.jdPaused;       // not read from the button text: the EN switch rewrites it
-      G("jdPause").disabled = true;
-      try {
-        const r = await api(`/api/${resume ? "resume" : "pause"}/${st.activeJob}`, {});
-        st.jdPaused = !!r.paused;
-        G("jdPause").textContent = st.jdPaused ? "继续" : "暂停";
-      } catch (e) { toast("操作失败：" + e.message); }
-      G("jdPause").disabled = false;
-    });
-    G("jdStop").addEventListener("click", async () => {
-      if (!st.activeJob) return;
-      G("jdStop").disabled = true;
-      G("jdRunTitle").textContent = "正在停止…（当前这篇查完就停）";
-      try { await api(`/api/stop/${st.activeJob}`, {}); } catch (e) { toast("停止失败：" + e.message); G("jdStop").disabled = false; }
-    });
-    G("jdOpenDir").addEventListener("click", () =>
-      api("/api/open-folder", { path: st.jdDest || $("dlDir").value.trim() }).catch((e) => toast(e.message)));
   })();
 
   $("labDownload").addEventListener("click", async () => {
@@ -2111,28 +2326,25 @@ window.addEventListener("unhandledrejection", (e) => {
       const direct = picked.filter((x) => x.pdf);
       const byDoi = picked.filter((x) => !x.pdf && x.doi);
       const byTitle = picked.filter((x) => !x.pdf && !x.doi && x.title);
-      if (byDoi.length) addDois(byDoi.map((x) => x.doi));
       let msg = [];
       if (direct.length) msg.push(`${direct.length} 篇用页面 PDF 直链`);
-      if (byDoi.length) msg.push(`${byDoi.length} 篇放进下载队列（走机构/API/开放获取）`);
+      if (byDoi.length) msg.push(`${byDoi.length} 篇走机构/API/开放获取，进度见下方面板`);
       if (byTitle.length) {
         const box = $("titles");
         box.value = byTitle.map((x) => x.title).join("\n");
         if (typeof countInput === "function") countInput();
-        msg.push(`${byTitle.length} 条只有标题，已填进「① 标题 → DOI」`);
+        msg.push(`${byTitle.length} 条只有标题，已填进「① 标题 → DOI」，需要时到那一页解析`);
       }
       feedback("labFeedback", msg.join("；"));
-      if (!direct.length) {
-        showTab(byDoi.length ? "download" : "lookup");
-        return;
-      }
+      if (byDoi.length) dlHere("lb", $("labDownload"), byDoi.map((x) => x.doi));
+      if (!direct.length) return;
       try {
         const r = await api("/api/lab/download", { items: direct, dir: $("dlDir") ? $("dlDir").value.trim() : "" });
         pollJob(r.job_id, (d) => {
           $("labCount").textContent = `直链下载 ${d.done}/${d.total}`;
         }, (d) => {
           if (d.state === "error") { feedback("labFeedback", "直链下载失败：" + (d.error || ""), true); return; }
-          feedback("labFeedback", (d.markdown || "完成") + (byDoi.length ? `；另 ${byDoi.length} 篇已进下载队列` : ""));
+          feedback("labFeedback", (d.markdown || "完成") + (byDoi.length ? `；另 ${byDoi.length} 篇的进度见下方面板` : ""));
         });
       } catch (e) {
         feedback("labFeedback", "直链下载失败：" + e.message, true);

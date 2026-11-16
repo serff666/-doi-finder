@@ -36,6 +36,15 @@ window.__log = [];
       { doi: "10.1000/j3", status: "no_oa" }] : [{ doi: "10.1000/j1", status: "downloaded", file: "a.pdf" }]; } };
   jobs.J2 = { state: "done", done: 1, total: 1, dest: "/d", results: [{ doi: "10.1000/j2", status: "downloaded", file: "b.pdf" }] };
   jobs.J3 = { get state() { return window.__jd.stopped ? "stopped" : "running"; }, cancelled: false, done: 0, total: 3, results: [], dest: "/d" };
+  const cand = (doi, title, level) => ({ doi, title, year: "2023", authors: ["A. Author"], level, why: "why-" + level, url: "https://doi.org/" + doi });
+  const prow = (n, input, status, cands, auto, err) => ({ n, input, doi: "", title: input, first_author: "", year: "", status, candidates: cands || [], auto: auto || "", notes: [], error: err || "" });
+  jobs.P1 = { state: "done", done: 3, total: 3, results: [
+    prow(1, "Alpha paper", "found", [cand("10.26434/chemrxiv-1", "Alpha preprint", "exact"), cand("10.26434/chemrxiv-2", "Alpha-like", "possible")], "10.26434/chemrxiv-1"),
+    prow(2, "Beta paper", "error", [], "", "net down"), prow(3, "Gamma paper", "error", [], "", "timeout")] };
+  jobs.P2 = { state: "done", done: 2, total: 2, results: [prow(1, "Beta paper", "found", [cand("10.26434/chemrxiv-3", "Beta preprint", "likely")], "10.26434/chemrxiv-3"), prow(2, "Gamma paper", "none")] };
+  jobs.PD = { state: "done", done: 3, total: 3, dest: "/d", results: ["10.26434/chemrxiv-1", "10.26434/chemrxiv-2", "10.26434/chemrxiv-3"].map((d) => ({ doi: d, status: "downloaded", file: "p.pdf" })) };
+  jobs.K1 = { state: "done", done: 3, total: 3, dest: "/d", results: ["10.1000/alpha", "10.1000/beta", "10.1000/delta"].map((d) => ({ doi: d, status: "downloaded", file: "k.pdf" })) };
+  const pord = ["P1", "P2"]; let pused = 0, pdl = 0;
   const order = { lookup: ["L1", "L2", "L3"], download: ["D1", "D2", "J1", "J2", "J3"] };
   const used = { lookup: 0, download: 0 };
   let flaky = 0;
@@ -47,6 +56,8 @@ window.__log = [];
     let pm = u.match(/^\/api\/(pause|resume)\/J1/);
     if (pm) { window.__jd.paused = pm[1] === "pause"; return json({ ok: true, paused: window.__jd.paused }); }
     if (u === "/api/stop/J3") { window.__jd.stoppedSoon = true; return json({ ok: true }); }
+    if (u === "/api/preprint/find") return json({ job_id: pord[pused++] });
+    if (u === "/api/download" && window.__inpage) { return json({ job_id: pdl++ === 0 ? "K1" : "PD" }); }
     if (u === "/api/lookup" || u === "/api/download") {
       const k = u.slice(5), id = order[k][used[k]++];
       return json({ job_id: id });
@@ -157,6 +168,56 @@ DRIVER = r"""
     window.__jd.stopped = true;
     await until(() => /已停止/.test($("jdRunTitle").textContent) && !$("jdRetry").hidden, "stopped");
     ok("stopped run offers retry for the rest", $("jdRetry").textContent.includes("3") || $("jdRetry").textContent.includes("2") || $("jdRetry").textContent.includes("1"), $("jdRetry").textContent);
+
+    // ---- lookup page: download right there, no jump to the DOI -> PDF tab
+    window.__inpage = true;
+    document.querySelector('[data-tab="lookup"]').click();
+    await until(() => !$("toDownload").disabled, "toDownload enabled");
+    const tabBefore = document.querySelector("[data-tab].active, [data-tab][aria-selected='true']");
+    $("toDownload").click();
+    await until(() => !!$("lkPanel") && /下载完成/.test($("lkRunTitle").textContent), "in-page download");
+    ok("lookup download stays on the lookup page", document.getElementById("tab-lookup") && !document.getElementById("tab-lookup").hidden && document.getElementById("tab-download").hidden);
+    ok("in-page download sent the matched DOIs", window.__log.filter((c) => c[0] === "/api/download").slice(-1)[0][1].dois.includes("10.1000/alpha"), JSON.stringify(window.__log.filter((c) => c[0] === "/api/download").slice(-1)));
+
+    // ---- preprint page
+    document.querySelector('[data-tab="preprint"]').click();
+    ok("preprint page shown", !document.getElementById("tab-preprint").hidden);
+    ok("find with empty input refuses", ($("ppFind").click(), /至少一行/.test($("ppFeedback").textContent)));
+    $("ppInput").value = "Alpha paper\nBeta paper\nGamma paper";
+    $("ppFind").click();
+    await until(() => /没查成/.test($("ppRunTitle").textContent), "preprint find done");
+    ok("find posts the typed lines", window.__log.filter((c) => c[0] === "/api/preprint/find")[0][1].text === "Alpha paper\nBeta paper\nGamma paper");
+    ok("panel turns red with failures", $("ppPanel").classList.contains("bad"));
+    ok("exact candidate preselected, possible not", document.querySelector('[data-pp="10.26434/chemrxiv-1"]').checked && !document.querySelector('[data-pp="10.26434/chemrxiv-2"]').checked);
+    ok("levels and reasons shown", /why-exact/.test($("ppRoot").textContent) && /why-possible/.test($("ppRoot").textContent));
+    ok("failed rows say the query failed, not 'none'", $("ppRoot").textContent.split("查询没成功").length === 3 && !/没有找到预印本/.test($("ppRoot").textContent));
+    ok("retry offered for 2", !$("ppRetryFind").hidden && $("ppRetryFind").textContent.includes("2"), $("ppRetryFind").textContent);
+    ok("download enabled with 1 selected", !$("ppDownload").disabled && /已选 1/.test($("ppCount").textContent), $("ppCount").textContent);
+    $("ppRetryFind").click();
+    await until(() => /查找完成/.test($("ppRunTitle").textContent) && $("ppRetryFind").hidden, "retry done");
+    ok("retry sends only the failed line", window.__log.filter((c) => c[0] === "/api/preprint/find")[1][1].text === "Beta paper\nGamma paper");
+    ok("retried row spliced in place, order kept", [...document.querySelectorAll(".pp-row b")].map((b) => b.textContent).join("|") === "Alpha paper|Beta paper|Gamma paper" && /Beta preprint/.test($("ppRoot").textContent) && /没有找到预印本/.test(document.querySelectorAll(".pp-row")[2].textContent) && !/查询没成功/.test($("ppRoot").textContent));
+    ok("retry preselects the new auto pick", document.querySelector('[data-pp="10.26434/chemrxiv-3"]').checked && /已选 2/.test($("ppCount").textContent), $("ppCount").textContent);
+    document.querySelector('[data-pp="10.26434/chemrxiv-2"]').click();
+    ok("manual tick adds possible one", /已选 3/.test($("ppCount").textContent));
+    $("ppPickGood").click();
+    ok("pick good resets to the confident ones", /已选 2/.test($("ppCount").textContent) && !document.querySelector('[data-pp="10.26434/chemrxiv-2"]').checked);
+    $("ppNone").click();
+    ok("none clears and disables download", $("ppDownload").disabled);
+    $("ppPickGood").click();
+    document.querySelector('[data-pp="10.26434/chemrxiv-2"]').click();
+    $("ppDownload").click();
+    await until(() => /下载完成/.test($("ppRunTitle").textContent), "preprint download");
+    const pc = window.__log.filter((c) => c[0] === "/api/download").slice(-1)[0][1];
+    ok("preprint download sends the selected preprint DOIs", JSON.stringify(pc.dois.slice().sort()) === '["10.26434/chemrxiv-1","10.26434/chemrxiv-2","10.26434/chemrxiv-3"]', JSON.stringify(pc.dois));
+    ok("preprint page stays put", !document.getElementById("tab-preprint").hidden);
+
+    // ---- from the DOI -> PDF page: unfetched DOIs go to the preprint page, which only fills the box
+    document.querySelector('[data-tab="download"]').click();
+    ok("missing-to-preprint enabled (rows have failures)", !$("missingToPreprint").disabled);
+    $("missingToPreprint").click();
+    ok("preprint input filled with the failed DOI", /10\.1000\/c/.test($("ppInput").value) || /10\.1000\/b/.test($("ppInput").value), $("ppInput").value);
+    ok("lands on preprint page without searching", !document.getElementById("tab-preprint").hidden && window.__log.filter((c) => c[0] === "/api/preprint/find").length === 2);
   } catch (e) { out.err = String(e && e.message || e) + " | dlStatus=" + $("dlStatus").textContent + " | dlFeedback=" + $("dlFeedback").textContent + " | log=" + JSON.stringify(window.__log.slice(-4)); }
   const pre = document.createElement("pre"); pre.id = "result"; pre.textContent = JSON.stringify(out);
   document.body.appendChild(pre);
