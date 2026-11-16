@@ -47,14 +47,24 @@ DOI Finder chains those steps into one pipeline and **tells you, at every step, 
 - **Topic search** (keywords / author / ORCID / years, optional open-access only), **ChemASAP**, **Journal feed** (what is new since you last looked), **Journal library** (a whole journal from its first issue, filed as `Journal/Year/Volume V, Issue I/`), **Lab pages** (any publications page, scraped in a real browser), **ResearchGate**, a dedicated **Preprints** page, and **Archive** for PDFs you got elsewhere.
 
 **Every page on its own**
-Each page downloads in place with its own progress panel (bar, pause, stop, retry, open folder) and its own **folder, Sci-Hub switch, institutional-browser switch and worker count**. Download a journal on one page and a group's papers on another at the same time.
+Each page downloads in place with its own progress panel (bar, pause, stop, retry, open folder) and its own **workspace, collection folder, structure, Sci-Hub switch, institutional-browser switch and worker count**. Download a journal on one page and a group's papers on another at the same time.
 
 **Local and transparent**
 No account; keys (Elsevier, Wiley, CORE, OpenAlex) are stored only in `settings.json` on your machine; English / Chinese UI; each channel can be switched off; certificate verification is on by default.
 
+## Where files go: the workspace rule
+
+Every page files the same way: `workspace / collection / sub / file.pdf`, e.g. `D:\Literature\Zhang Xinglong\2025\Zhang_2025_Title.pdf`.
+
+- **Workspace**: one root folder you pick once (top bar).
+- **Collection**: the first level, named after what is being collected and suggested automatically (editable on each page): topic search by author → the author's name (by year); by keywords → the keywords; ResearchGate → the author; journal feed → the journal (by year); journal library → the journal (`Year / Volume V, Issue I`); lab pages → the site's host (by year); ChemASAP → `ChemASAP` (by journal); preprints → `预印本`; ① and ② → `未分类` (inbox).
+- **Sub**: flat / by year / by journal / journal → year / year → volume-issue, from the paper's metadata (missing values go to "年份未知" / "期刊未知", nothing is lost).
+- Each page shows the full "will be saved to" path before you download.
+- **No duplicates**: `.doi-index.json` at the workspace root remembers every file; a paper already filed under another collection is copied, not downloaded again; the per-folder indexes of older versions are recognised.
+
 ## Quick start
 
-1. Start the app and open `http://127.0.0.1:8765/`; choose a default download folder at the top and (optionally) put a contact email in Settings to be rate-limited less.
+1. Start the app and open `http://127.0.0.1:8765/`; choose the workspace at the top and (optionally) put a contact email in Settings to be rate-limited less.
 2. On **① Title → DOI** paste titles, click start, and look at the levels.
 3. Click "→ download these PDFs" and watch the panel on the same page; for papers that failed use "find preprint version" or "retry".
 4. Export the unfetched list, or open the download folder.

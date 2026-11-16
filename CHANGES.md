@@ -8,6 +8,10 @@
 - Every page downloads in place with its own progress panel (bar, counts, pause, stop, retry the unfinished, open folder) instead of jumping to ②, and has its own folder, channel switches and worker count. The detail list shows the download channel of each file, defaults to the unfetched ones, and exports them as CSV.
 - Per-page folders can be opened (the server accepts folders used by download jobs of this session).
 
+**One filing rule for every page**
+- Files go to `workspace / collection / sub / file.pdf` everywhere (`filing.py`). The top bar is now the workspace; each page suggests a collection folder from what it collects (author name, journal, group site host, keywords, ChemASAP, preprints, inbox) and a structure (flat / year / journal / journal→year / year→volume-issue), both editable on the page, with a "will be saved to" preview. ① and ② file into the `未分类` inbox by default.
+- The workspace-root `.doi-index.json` is the one index: a paper already filed in another collection is copied, not downloaded again; older per-folder indexes are folded in. The lab page's direct PDFs follow the same rule (they used to make bare year folders). Old requests with only `dir` still work. ⑦ Archive keeps its own template.
+
 **Matching**
 - BibTeX/RIS year, first author and journal take part in matching (a clear contradiction lowers the level and is written in the note; missing fields never count; year + author agreement can lift "uncertain" to "likely"); same-title records are told apart by year.
 - Fixed: blank author hint turned the row into an error; author hints matched substrings; rows with the same title but a different year/DOI shared one result; a typed DOI could be replaced by a sibling record; OpenAlex results carried no authors.
