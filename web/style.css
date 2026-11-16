@@ -320,3 +320,14 @@ tr.editing > td { background: #eef3ff; }
 /* numbered explanation lists inside side panels */
 .rule .steps { margin: 6px 0 0 18px; padding: 0; line-height: 1.65; }
 .rule .steps li { margin-bottom: 4px; }
+
+/* settings tab */
+.settings-grid { columns: 2; column-gap: 16px; }
+.setcard { padding: 20px 22px; margin: 0 0 16px; break-inside: avoid; display: inline-block; vertical-align: top; width: 100%; box-sizing: border-box; }
+.setcard h2 { margin: 0 0 12px; font-size: 16px; }
+.setcard .smallinput { margin-bottom: 8px; }
+.tab-right { margin-left: auto; }
+@media (max-width: 900px) { .settings-grid { columns: 1; } }
+.setcard > :nth-child(2) { margin-top: 0; }
+.setcard p, .setcard .rule p { font-size: 13px; line-height: 1.6; color: var(--muted); margin: 0 0 12px; }
+.setcard .rule { margin-top: 0; }
