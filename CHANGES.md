@@ -12,6 +12,10 @@
 - Files go to `workspace / collection / sub / file.pdf` everywhere (`filing.py`). The top bar is now the workspace; each page suggests a collection folder from what it collects (author name, journal, group site host, keywords, ChemASAP, preprints, inbox) and a structure (flat / year / journal / journal→year / year→volume-issue), both editable on the page, with a "will be saved to" preview. ① and ② file into the `未分类` inbox by default.
 - The workspace-root `.doi-index.json` is the one index: a paper already filed in another collection is copied, not downloaded again; older per-folder indexes are folded in. The lab page's direct PDFs follow the same rule (they used to make bare year folders). Old requests with only `dir` still work. ⑦ Archive keeps its own template.
 
+**Fixes**
+- Wrong publication years: a year must now stand alone, so the DOI tail in a file name (`acs.joc.4c02061` gave 2061) and the ends of a page range (`2025, 90, 2052–2061`) no longer count (`filing.find_year`, used by ⑦ Archive, PDF first-page reading and the lab-page parser). The lab parser also no longer returns `20` as a year.
+- README: ChemASAP covers all of chemistry, not only organic.
+
 **Matching**
 - BibTeX/RIS year, first author and journal take part in matching (a clear contradiction lowers the level and is written in the note; missing fields never count; year + author agreement can lift "uncertain" to "likely"); same-title records are told apart by year.
 - Fixed: blank author hint turned the row into an error; author hints matched substrings; rows with the same title but a different year/DOI shared one result; a typed DOI could be replaced by a sibling record; OpenAlex results carried no authors.

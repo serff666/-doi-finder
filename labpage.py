@@ -8,6 +8,7 @@ curl 强制 IPv4 + HTTP/1.1 就正常。curl 是 Windows 10 以后自带的，�
 """
 from __future__ import annotations
 
+import filing
 import platform_util
 import html as html_mod
 import json
@@ -218,8 +219,7 @@ def parse_block(text: str) -> dict:
     if ym:
         year = ym[-1]
     else:
-        ys = re.findall(r"\b((?:19|20)\d{2})\b", t)
-        year = ys[-1] if ys else ""
+        year = filing.find_year(t, last=True)
 
     # 作者串起点：形如 "M. Curie" / "A. Einstein" 之后跟逗号或 and
     cut = None
@@ -261,8 +261,7 @@ def parse_block(text: str) -> dict:
             pages = f"{pm.group(1)}-{pm.group(2)}"
     title = re.sub(r"\s*\((?:19|20)\d{2}\)\s*$", "", title).strip(" .,;")
     if not year:
-        ys = re.findall(r"\b(19|20)\d{2}\b", text or "")
-        year = ys[-1] if ys else ""
+        year = filing.find_year(text, last=True)
     return {"title": clean_title(title), "authors": rest[:0], "journal": journal,
             "year": year, "volume": vol, "issue": issue, "pages": pages, "doi": doi}
 

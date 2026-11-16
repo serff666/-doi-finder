@@ -185,11 +185,8 @@ def _pdf_year(path: str) -> str:
                 text = (reader.pages[0].extract_text() or "")[:4000]
         except Exception:  # noqa: BLE001
             return ""
-    years = re.findall(r"\b(19[89]\d|20[0-4]\d)\b", text or "")
-    if not years:
-        return ""
-    # 版权行常出现多个年份，取最靠后的一个（通常是出版年）
-    return years[-1]
+    # 版权行常出现多个年份，取最靠后的一个（通常是出版年）；页码、DOI 尾号里的数字不算
+    return filing.find_year(text, last=True)
 
 def _pdf_title(src: str) -> str:
     """Best-effort title from the PDF's own /Title entry (no third-party lib)."""
@@ -809,15 +806,14 @@ class Handler(BaseHTTPRequestHandler):
             stem = os.path.splitext(os.path.basename(src))[0]
             meta = dict(fields)
             parts = [p for p in re.split(r"[_\-\s]+", stem) if p]
-            if len(parts) >= 3 and re.fullmatch(r"(19|20)\d{2}", parts[1]):
+            if len(parts) >= 3 and filing.find_year(parts[1]) == parts[1]:
                 meta["first_author"] = meta["first_author"] or parts[0]
                 meta["year"] = meta["year"] or parts[1]
                 meta["title"] = meta["title"] or "_".join(parts[2:])
             if not meta["title"]:
                 meta["title"] = _pdf_title(src) or stem
             if not meta["year"]:
-                m = re.search(r"(19|20)\d{2}", stem)
-                meta["year"] = m.group(0) if m else ""
+                meta["year"] = filing.find_year(stem)
             if not meta["year"] and ext == ".pdf":
                 # 文件名里没有年份，就从 PDF 首页读，别直接扔进"未分类"
                 meta["year"] = _pdf_year(src)
