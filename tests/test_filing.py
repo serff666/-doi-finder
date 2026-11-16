@@ -181,3 +181,17 @@ def test_lab_pdfs_follow_the_same_structure():
         assert all(x["status"] == "downloaded" for x in r)
     finally:
         labpage._fetch_pdf = orig
+
+
+def test_find_year_ignores_digits_inside_longer_numbers():
+    # the DOI tail of acs.joc.4c02061 holds "2061"; it is not a year
+    assert filing.find_year("acs.joc.4c02061") == ""
+    assert filing.find_year("acs.joc.4c02061_Tan_2025") == "2025"
+    assert filing.find_year("J. Org. Chem. 2025, 90, 2052–2061", last=True) == "2025"
+    assert filing.find_year("Copyright 2019 ... 2061 pages 12345678") == "2019"
+    assert filing.find_year("") == "" and filing.find_year(None) == ""
+
+
+def test_archive_year_from_doi_like_file_name(tmp_path):
+    import labpage
+    assert labpage.parse_block("Tan J. Unraveling the Mechanism. J. Org. Chem. 2025, 90, 2052–2061")["year"] == "2025"

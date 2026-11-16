@@ -40,6 +40,32 @@ def collection_name(name: str) -> str:
     return sanitize(name, 80) if name else INBOX
 
 
+_YEAR_IN = re.compile(r"(?<!\d)(19[89]\d|20\d\d)(?!\d)")
+
+
+def find_year(text, *, last: bool = False) -> str:
+    """A publication year found inside free text or a file name, '' if none.
+
+    The year must stand alone (not inside a longer digit run such as the DOI tail
+    acs.joc.4c02061, which holds "2061") and must not lie in the future.
+    """
+    import datetime
+    limit = datetime.date.today().year + 1
+    text = str(text or "")
+    alone, ranged = [], []
+    for m in _YEAR_IN.finditer(text):
+        if not 1980 <= int(m.group(1)) <= limit:
+            continue
+        # "2052–2061" in "2025, 90, 2052–2061" is a page range, not years
+        in_range = (re.search(r"\d\s*[–—-]\s*$", text[:m.start()])
+                    or re.match(r"\s*[–—-]\s*\d", text[m.end():]))
+        (ranged if in_range else alone).append(m.group(1))
+    years = alone or ranged
+    if not years:
+        return ""
+    return years[-1] if last else years[0]
+
+
 def year_of(value) -> str:
     m = re.match(r"\s*(\d{4})", str(value or ""))
     return m.group(1) if m else ""
