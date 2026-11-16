@@ -43,14 +43,16 @@ def test_windows_files_filter_and_multiselect(monkeypatch):
     assert seen["env"]["DF_FILTER"] == "PDF|*.pdf|所有文件|*.*" and seen["env"]["DF_MULTI"] == "1"
 
 
-def test_windows_failure_falls_back_to_tk(monkeypatch):
+def test_windows_never_uses_tk(monkeypatch):
+    import pytest
     monkeypatch.setattr(pu, "IS_WIN", True)
+    monkeypatch.setattr(pu, "_tk_pick", lambda *a, **k: pytest.fail("Tk must not run on Windows"))
     _fake_run(monkeypatch, _Done(b"", 1, b"boom"), {})
-    calls = []
-    monkeypatch.setattr(pu, "_tk_pick", lambda *a, **k: calls.append((a, k)) or ["/tk/dir"])
-    assert pu.pick_folder("x") == "/tk/dir" and len(calls) == 1
+    with pytest.raises(Exception):
+        pu.pick_folder("x")
     _fake_run(monkeypatch, FileNotFoundError("no powershell"), {})
-    assert pu.pick_files("x", (("PDF", "*.pdf"),)) == ["/tk/dir"]
+    with pytest.raises(Exception):
+        pu.pick_files("x", (("PDF", "*.pdf"),))
 
 
 def test_non_windows_goes_straight_to_tk(monkeypatch):

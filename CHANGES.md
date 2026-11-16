@@ -5,7 +5,7 @@
 **English interface and file pickers**
 - The English UI no longer leaves Chinese behind: a dictionary plus sentence rules (`web/i18n.en.js`) cover static text, tables, status lines, placeholders, titles and the page title; runtime text is translated by a MutationObserver, and the language can be switched back and forth without reloading. Text composed in JS (confirm dialogs, path preview, default folder names) follows the UI language.
 - Pause/resume no longer reads the button's label (it broke in English); it uses a state flag.
-- Windows pickers: the dialog's owner window is brought to the foreground explicitly (Alt-key tap + `SetForegroundWindow`), so it no longer opens behind a minimized/other browser window; Tk fallback lifts and focuses itself.
+- Windows pickers: the dialog's owner window is brought to the foreground explicitly (Alt-key tap + `SetForegroundWindow`), so it no longer opens behind a minimized/other browser window. On Windows this is the only dialog path (no Tk fallback); Tk remains only for macOS/Linux.
 - Tests: `tests/web_i18n_check.py` (real English DOM crawl of every page and running state, plus zh↔en round trip) and `tests/i18n_audit.py` (every Chinese string in the web code must have an English form); both run in CI. Server-side messages and exported file names/CSV headers stay Chinese.
 
 **Downloads**
