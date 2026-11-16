@@ -1,6 +1,6 @@
 # Changes and known issues
 
-**Unreleased:** Sci-Hub certificate verification is now on by default (opt-out checkbox in Settings); journal tab resolves titles to ISSN.
+**Unreleased:** **Logic audit:** download hints for Elsevier/Wiley were silently dropped; the "no open-access record" status could never trigger; preprint DOIs were re-downloaded every run; long/Chinese filenames and Windows reserved names could fail to save; same-title files could overwrite each other; paused time counted toward the per-paper timeout; a stop after the last paper marked the job stopped; journal year folder could disagree with its volume/issue and volumes sorted as text. All fixed with tests.  Sci-Hub certificate verification is now on by default (opt-out checkbox in Settings); journal tab resolves titles to ISSN.
 
 **2.1.1 (takeover):** restored the email input, fixed `/api/jobs`, archive path guard, front-matter filter in harvest, cross-platform helpers, LF line endings, tests + CI. Also: translation code fully removed, lint (ruff F/E9) clean, dead harvest JS removed, journal tab ⑨ now has a type filter (research / review / exclude corrections) that sets the default selection and shows a type column. Still unverified: real Crossref harvest, real downloads and the live UI (no network in the build sandbox).
 
