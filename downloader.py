@@ -81,12 +81,33 @@ def _inst_gate() -> None:
         _inst_last[0] = time.time()
 
 
+# Names Windows refuses to create as files or folders, whatever the extension.
+_RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
+
+
 def sanitize(name: str, maxlen: int = 110) -> str:
     name = _BAD.sub(" ", name or "")
     name = re.sub(r"\s+", " ", name).strip(" .")
     if len(name) > maxlen:
         name = name[:maxlen].rstrip(" .")
+    if name.split(".")[0].strip().upper() in _RESERVED:
+        name = "_" + name
     return name or "untitled"
+
+
+def _fit_name(dest: str, base: str, ext: str) -> str:
+    """Shorten `base` so the file can actually be created.
+
+    Windows fails past ~260 characters for the whole path; Linux/macOS fail past 255 *bytes* for one
+    name, and Chinese titles take 3 bytes per character. Room is left for a " (99)" duplicate suffix.
+    """
+    room_path = 250 - len(os.path.abspath(dest)) - 1 - len(ext) - 5 if os.name == "nt" else 10 ** 6
+    room_bytes = 255 - len(ext.encode()) - 5
+    limit = max(24, min(len(base), room_path))
+    base = base[:limit]
+    while len(base.encode("utf-8")) > room_bytes and len(base) > 1:
+        base = base[:-1]
+    return base.rstrip(" .") or "untitled"
 
 
 _TAG_RE = re.compile(r"<[^>]{1,20}>")
@@ -251,19 +272,23 @@ def _save(dest: str, base: str, data: bytes, force: bool) -> tuple[str | None, s
         ext = ".xml"
     else:
         ext = ".txt"
+    base = _fit_name(dest, base, ext)
     name = base + ext
     path = os.path.join(dest, name)
     n = 2
-    while os.path.exists(path) and not force:
-        path = os.path.join(dest, f"{base} ({n}){ext}")
-        name = os.path.basename(path)
-        n += 1
-    try:
-        with open(path, "wb") as fh:
-            fh.write(data)
-    except Exception as e:  # noqa: BLE001
-        return None, str(e)
-    return path, name
+    for _ in range(1000):
+        try:
+            # "x" = create exclusively: two workers writing the same title can never overwrite each other
+            with open(path, "wb" if force and n == 2 else "xb") as fh:
+                fh.write(data)
+            return path, name
+        except FileExistsError:
+            path = os.path.join(dest, f"{base} ({n}){ext}")
+            name = os.path.basename(path)
+            n += 1
+        except Exception as e:  # noqa: BLE001
+            return None, str(e)
+    return None, "同名文件太多"
 
 
 def _try_scihub(doi: str, conf: dict, should_stop=None) -> tuple[bytes | None, str, str, str]:
@@ -282,6 +307,12 @@ def download_one(doi: str, dest: str, email: str, template: str,
                  index: dict, force: bool = False, scihub_conf: dict | None = None,
                  inst_conf: dict | None = None, step=None, stop=None) -> dict:
     t_start = time.monotonic()
+    paused0 = float(getattr(stop, "paused_seconds", lambda: 0.0)())
+
+    def active_seconds() -> float:
+        """Time spent working on this DOI, excluding time the user had the job paused."""
+        paused = float(getattr(stop, "paused_seconds", lambda: 0.0)()) - paused0
+        return time.monotonic() - t_start - max(0.0, paused)
 
     def stopped() -> bool:
         # a pausable stop signal blocks here while paused, so pause also works mid-DOI
@@ -321,6 +352,7 @@ def download_one(doi: str, dest: str, email: str, template: str,
 
     diag: list[str] = []
     oa_cache: list[dict] | None = None
+    oa_real: int | None = None      # None = never looked up; 0 = looked up, nothing found
 
     def oa_candidates() -> list[dict]:
         """Resolve OA links the first time something actually needs them.
@@ -329,7 +361,7 @@ def download_one(doi: str, dest: str, email: str, template: str,
         ten OA sources up front is pure latency on the common path. This runs
         only when try_oa is reached.
         """
-        nonlocal oa_cache
+        nonlocal oa_cache, oa_real
         if oa_cache is not None:
             return oa_cache
         say("查询开放获取来源…")
@@ -337,12 +369,14 @@ def download_one(doi: str, dest: str, email: str, template: str,
             oa_cache = sources.resolve_oa(doi, email, diag=diag)
         except Exception:  # noqa: BLE001
             oa_cache = []
+        oa_real = len(oa_cache)      # real open-access records, before the DOI landing page is added
         # DOI 本身就指向出版社落地页，OA 文章在那页上直接给出 citation_pdf_url。
         oa_cache.insert(0, {"url": "https://doi.org/" + urllib.parse.quote(doi, safe="/()"),
                             "source": "DOI 落地页"})
         return oa_cache
 
     errors: list[str] = []
+    requested_doi = doi          # what the caller asked for; the index must answer to this key
     # 预印本 DOI 先换成正式发表版本：SSRN 上要登录，正式版常常是开放获取
     try:
         import sources as _src
@@ -381,8 +415,10 @@ def download_one(doi: str, dest: str, email: str, template: str,
         if not path:
             rec.update({"status": "failed", "note": f"写入失败：{name}"})
             return rec
-        index[doi] = {"file": name, "title": meta.get("title", ""), "saved_at": int(time.time()),
-                      "source": got["source"], "url": got["url"]}
+        entry = {"file": name, "title": meta.get("title", ""), "saved_at": int(time.time()),
+                 "source": got["source"], "url": got["url"]}
+        index[doi] = entry
+        index[requested_doi] = entry   # else a preprint DOI would be re-downloaded on every run
         rec.update({"status": "downloaded", "file": name, "url": got["url"],
                     "source": got["source"],
                     "note": f"{len(got['data']) // 1024} KB · "
@@ -434,10 +470,9 @@ def download_one(doi: str, dest: str, email: str, template: str,
     def try_oa() -> dict | None:
         nonlocal oa_last_err, oa_blocked
         cands = oa_candidates()
-        if not cands:
+        if oa_real == 0:
             errors.append("没有开放获取记录")
-            return None
-        for c in cands[:6]:
+        for c in cands[:8]:
             if stopped():
                 break
             data, err, resolved = fetch_pdf(c["url"])
@@ -582,7 +617,7 @@ def download_one(doi: str, dest: str, email: str, template: str,
             order.append((s_, fn))
 
     for name, attempt in order:
-        if time.monotonic() - t_start > DEADLINE_PER_DOI:
+        if active_seconds() > DEADLINE_PER_DOI:
             errors.append(f"单篇超过 {DEADLINE_PER_DOI} 秒，已放弃剩余来源")
             break
         if stopped():
@@ -602,13 +637,12 @@ def download_one(doi: str, dest: str, email: str, template: str,
             errors.append("机构通道未获取到，订阅刊新文无其他可用来源")
             break
 
-    joined = "；".join(errors)
     # A dead end the user can actually fix is worth naming precisely. Elsevier
     # sits behind a challenge no automated client passes, but its API does not.
     if elsevier.is_elsevier(doi) and not (inst.get("elsevier_key") or "").strip():
-        joined += "；Elsevier 文章走 API 才能自动下载：在设置里填 elsevier_key（dev.elsevier.com 免费申请）"
+        errors.append("Elsevier 文章走 API 才能自动下载：在设置里填 elsevier_key（dev.elsevier.com 免费申请）")
     if wiley.is_wiley(doi) and not (inst.get("wiley_token") or "").strip():
-        joined += "；Wiley 文章需要 TDM token：在设置里填 wiley_token（onlinelibrary.wiley.com 的 TDM 页面获取）"
+        errors.append("Wiley 文章需要 TDM token：在设置里填 wiley_token（onlinelibrary.wiley.com 的 TDM 页面获取）")
     # 同一句失败原因常常出现两次（开放获取和直连各试一次），去重后读者才看得清
     deduped: list[str] = []
     for e in errors:
@@ -616,7 +650,7 @@ def download_one(doi: str, dest: str, email: str, template: str,
             deduped.append(e)
     joined = "；".join(deduped)
     sources_tail = ("；" + "；".join(diag[:6])) if diag else ""
-    no_oa_record = oa_cache is not None and not oa_cache
+    no_oa_record = oa_real == 0
     if any(k in joined for k in ("验证码", "DDoS", "订阅", "登录")):
         status = "blocked"
     elif "未收录" in joined or no_oa_record:

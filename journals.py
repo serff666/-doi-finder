@@ -175,6 +175,20 @@ def resolve(name: str) -> dict | None:
     return cands[0]
 
 
+def _issue_year(item: dict) -> str:
+    """Year of the printed issue (what the volume/issue numbers belong to)."""
+    for field in ("published-print", "issued"):
+        parts = ((item.get(field) or {}).get("date-parts") or [[None]])[0]
+        if parts and parts[0]:
+            return str(parts[0])
+    return ""
+
+
+def _natural(s: str):
+    """Sort key so that volume 9 comes before volume 10 (and issue "S1" after 12)."""
+    return [(0, int(x)) if x.isdigit() else (1, x.lower()) for x in re.findall(r"\d+|\D+", s or "")]
+
+
 def _date_of(item: dict) -> str:
     """Return the date a reader cares about: when it appeared online.
 
@@ -374,6 +388,8 @@ def harvest(issn: str, year_from: int = 0, year_to: int = 0,
             break
         offset = 0
         while True:
+            if stop is not None and stop.is_set():
+                break
             params = {
                 "rows": 1000,
                 "offset": offset,
@@ -382,7 +398,7 @@ def harvest(issn: str, year_from: int = 0, year_to: int = 0,
                 # Without select, Crossref returns full metadata (references, abstracts…)
                 # for 1000 items per page: megabytes per request and the main cause of slow harvests.
                 "select": "DOI,title,author,volume,issue,page,type,container-title,"
-                          "published,published-print,published-online,issued",
+                          "published,published-print,published-online,issued,created",
                 "filter": ",".join(x for x in [
                     f"type:{kind}" if kind else "",
                     f"from-pub-date:{year}-01-01",
@@ -427,11 +443,15 @@ def harvest(issn: str, year_from: int = 0, year_to: int = 0,
                     if nm:
                         authors.append(nm)
                 date = _date_of(it)
+                vol, iss = str(it.get("volume") or ""), str(it.get("issue") or "")
+                # Folder year: a paper in "Volume 14, Issue 1" belongs under the year of that issue even
+                # if it appeared online in December of the year before; otherwise use the online date.
+                fyear = (_issue_year(it) if (vol or iss) else "") or (date or "")[:4] or str(year)
                 out.append({
                     "doi": doi, "title": title, "authors": authors,
-                    "date": date, "year": (date or "")[:4] or str(year),
-                    "volume": str(it.get("volume") or ""),
-                    "issue": str(it.get("issue") or ""),
+                    "date": date, "year": fyear,
+                    "volume": vol,
+                    "issue": iss,
                     "page": str(it.get("page") or ""),
                     "journal": (it.get("container-title") or [""])[0],
                     "type": it.get("type") or "",
@@ -452,6 +472,6 @@ def harvest(issn: str, year_from: int = 0, year_to: int = 0,
         if len(out) >= limit:
             break
 
-    out.sort(key=lambda x: (x.get("year") or "", x.get("volume") or "",
-                            x.get("issue") or "", x.get("doi") or ""))
+    out.sort(key=lambda x: (x.get("year") or "", _natural(x.get("volume")),
+                            _natural(x.get("issue")), x.get("doi") or ""))
     return out

@@ -446,6 +446,13 @@ class _PauseGate:
     def set(self) -> None:
         self.job["cancel"].set()
 
+    def paused_seconds(self) -> float:
+        """Wall-clock seconds this job has spent paused, so a long pause is not counted as a timeout."""
+        total = float(self.job.get("paused_total") or 0.0)
+        if self.job.get("paused") and self.job.get("paused_at"):
+            total += time.monotonic() - self.job["paused_at"]
+        return total
+
 
 def _parse_glossary(raw: str) -> dict:
     """术语表：JSON 对象优先；否则按行解析"英文<分隔符>中文"。
@@ -607,10 +614,13 @@ def run_download_job(job_id: str, dois: list[str], opts: dict):
                 fails[key] = fails.get(key, 0) + 1
         job["summary"] = " · ".join(f"{k} {v}" for k, v in counts.items())
         job["dest"] = dest
-        job["state"] = "stopped" if job["cancel"].is_set() else "done"
+        # "stopped" only if something was actually left undone; a stop pressed after the last
+        # paper finished is still a completed job.
+        was_stopped = any(r.get("status") == "stopped" for r in results)
+        job["state"] = "stopped" if was_stopped else "done"
         save_last("download", {"at": time.time(), "dest": dest, "results": results,
                                 "summary": job["summary"],
-                                "stopped": job["cancel"].is_set()})
+                                "stopped": was_stopped})
         top_src = " · ".join(f"{k} {v}" for k, v in sorted(srcs.items(), key=lambda x: -x[1])[:6])
         top_fail = " · ".join(f"{k} ×{v}" for k, v in sorted(fails.items(), key=lambda x: -x[1])[:4])
         log(f"download job {job_id}: {len(results)} DOI in {time.time() - started:.0f}s "
@@ -1129,6 +1139,8 @@ class Handler(BaseHTTPRequestHandler):
             job = JOBS.get(p.rsplit("/", 1)[-1])
             if not job:
                 return self._json({"error": "unknown job"}, 404)
+            if not job.get("paused"):
+                job["paused_at"] = time.monotonic()
             job["paused"] = True
             return self._json({"ok": True, "paused": True})
 
@@ -1136,7 +1148,10 @@ class Handler(BaseHTTPRequestHandler):
             job = JOBS.get(p.rsplit("/", 1)[-1])
             if not job:
                 return self._json({"error": "unknown job"}, 404)
+            if job.get("paused") and job.get("paused_at"):
+                job["paused_total"] = float(job.get("paused_total") or 0.0) + time.monotonic() - job["paused_at"]
             job["paused"] = False
+            job["paused_at"] = 0.0
             return self._json({"ok": True, "paused": False})
 
         if p.startswith("/api/stop/"):

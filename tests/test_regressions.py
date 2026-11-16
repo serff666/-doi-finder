@@ -250,3 +250,131 @@ def test_scihub_verifies_tls_by_default():
     ctx = lambda s: next(h for h in s.opener.handlers if hasattr(h, "_context"))._context  # noqa: E731
     assert ctx(strict).verify_mode == ssl.CERT_REQUIRED and ctx(strict).check_hostname
     assert ctx(loose).verify_mode == ssl.CERT_NONE
+
+
+# ----------------------------------------------------------------- download logic
+def _stub_download_env(monkey, *, oa=(), fetch=None, published=""):
+    import browser
+    import downloader
+    import sources
+    monkey.append((sources, "work_meta", sources.work_meta))
+    monkey.append((sources, "resolve_oa", sources.resolve_oa))
+    monkey.append((sources, "published_version", sources.published_version))
+    monkey.append((downloader, "fetch_pdf", downloader.fetch_pdf))
+    monkey.append((browser, "find_browser", browser.find_browser))
+    sources.work_meta = lambda doi, email="": {"title": "A Paper", "year": "2020", "first_author": "Smith", "journal": "J"}
+    sources.resolve_oa = lambda doi, email="", diag=None: list(oa)
+    sources.published_version = lambda doi, title="", mailto="": published
+    downloader.fetch_pdf = fetch or (lambda url: (None, "HTTP 404", ""))
+    browser.find_browser = lambda: None
+
+
+def _restore(monkey):
+    for obj, name, val in reversed(monkey):
+        setattr(obj, name, val)
+
+
+def test_download_reports_no_open_access_record_and_key_hints():
+    import downloader
+    undo = []
+    _stub_download_env(undo)
+    try:
+        d = tempfile.mkdtemp()
+        rec = downloader.download_one("10.1016/j.x.2020.1", d, "", "{title}", {}, scihub_conf={"enabled": False})
+        # the DOI landing page is always tried, but "no OA record" must still be detected and reported
+        assert rec["status"] == "no_oa", rec
+        assert "没有开放获取记录" in rec["note"]
+        assert "elsevier_key" in rec["note"]            # the fixable hint used to be silently dropped
+        rec = downloader.download_one("10.1002/wcms.1704", d, "", "{title}", {}, scihub_conf={"enabled": False})
+        assert "wiley_token" in rec["note"]
+    finally:
+        _restore(undo)
+
+
+def test_preprint_swapped_for_published_version_is_indexed_under_both_dois():
+    import downloader
+    undo = []
+    _stub_download_env(undo, oa=[{"url": "https://x.org/a.pdf", "source": "T"}],
+                       fetch=lambda url: (b"%PDF-1.4 data", "", url), published="10.1002/published.1")
+    try:
+        d = tempfile.mkdtemp()
+        idx = {}
+        rec = downloader.download_one("10.26434/chemrxiv-2020-abc", d, "", "{title}", idx, scihub_conf={"enabled": False})
+        assert rec["status"] == "downloaded", rec
+        assert "10.26434/chemrxiv-2020-abc" in idx and "10.1002/published.1" in idx
+        again = downloader.download_one("10.26434/chemrxiv-2020-abc", d, "", "{title}", idx, scihub_conf={"enabled": False})
+        assert again["status"] == "exists"             # was re-downloaded every time before
+    finally:
+        _restore(undo)
+
+
+def test_filenames_are_creatable_everywhere():
+    import downloader
+    assert downloader.sanitize("CON") == "_CON" and downloader.sanitize("nul.txt").startswith("_")
+    assert downloader.sanitize("Console") == "Console"
+    base = downloader._fit_name(tempfile.mkdtemp(), "量子化学" * 80, ".pdf")
+    assert len((base + ".pdf").encode("utf-8")) <= 255
+    # two writers with the same title never overwrite each other
+    d = tempfile.mkdtemp()
+    p1, n1 = downloader._save(d, "Same Title", b"%PDF-1 one", False)
+    p2, n2 = downloader._save(d, "Same Title", b"%PDF-1 two", False)
+    assert n1 == "Same Title.pdf" and n2 == "Same Title (2).pdf"
+    assert open(p1, "rb").read().endswith(b"one") and open(p2, "rb").read().endswith(b"two")
+
+
+# ----------------------------------------------------------------- harvest logic
+def test_harvest_year_folder_follows_the_issue_and_sorts_naturally():
+    import journals
+    items = []
+    for vol in ("9", "10"):
+        items.append({"DOI": f"10.1/v{vol}", "title": [f"Paper v{vol}"], "volume": vol, "issue": "1",
+                      "container-title": ["J"], "type": "journal-article",
+                      "published": {"date-parts": [[2023, 12, 20]]},
+                      "published-online": {"date-parts": [[2023, 12, 20]]},
+                      "published-print": {"date-parts": [[2024, 1]]}})
+    items.append({"DOI": "10.1/noissue", "title": ["Online first"], "type": "journal-article",
+                  "published": {"date-parts": [[2023, 11, 2]]}, "published-online": {"date-parts": [[2023, 11, 2]]}})
+    orig = journals._get
+    journals._get = lambda url, rows=3: {"message": {"items": items, "total-results": len(items)}}
+    try:
+        got = journals.harvest("1759-0876", year_from=2023, year_to=2023, kind="")
+    finally:
+        journals._get = orig
+    by = {g["doi"]: g for g in got}
+    assert by["10.1/v9"]["year"] == "2024"          # filed with its issue, not the December online date
+    assert by["10.1/noissue"]["year"] == "2023"     # no issue yet: online date
+    assert [g["volume"] for g in got if g["volume"]] == ["9", "10"]    # 9 before 10, not "10" < "9"
+
+
+def test_pause_time_is_not_counted_against_the_per_paper_deadline():
+    import server
+    import time
+    job = {"cancel": threading.Event(), "paused": False}
+    gate = server._PauseGate(job)
+    assert gate.paused_seconds() == 0.0
+    job["paused"], job["paused_at"] = True, time.monotonic() - 5     # paused 5 s ago
+    assert 4.9 < gate.paused_seconds() < 6
+    job["paused_total"], job["paused"], job["paused_at"] = 7.0, False, 0.0    # resumed: 7 s banked
+    assert gate.paused_seconds() == 7.0
+
+
+def test_deadline_ignores_paused_time_in_download_one():
+    import downloader
+    undo = []
+    calls = {"n": 0}
+
+    class Stop:
+        def is_set(self): return False
+        def paused_seconds(self):
+            calls["n"] += 1
+            return 0.0 if calls["n"] == 1 else 1000.0     # "paused" for 1000 s while working
+    _stub_download_env(undo)
+    old = downloader.DEADLINE_PER_DOI
+    downloader.DEADLINE_PER_DOI = 0      # any real elapsed time would trip this, unless pause time is excluded
+    try:
+        rec = downloader.download_one("10.1002/wcms.1704", tempfile.mkdtemp(), "", "{title}", {},
+                                      scihub_conf={"enabled": False}, stop=Stop())
+        assert "超过" not in rec["note"], rec["note"]      # not aborted as "too slow"
+    finally:
+        downloader.DEADLINE_PER_DOI = old
+        _restore(undo)
