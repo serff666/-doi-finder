@@ -34,7 +34,11 @@ python tui.py        # or ./run.sh tui on Linux/macOS, run_tui.cmd on Windows
 ```
 
 Paste titles → find DOIs; paste DOIs → download. `/search WORDS --oa --year 2020-2024`, `/journal NAME-or-ISSN 2011-2024`,
-`/download 1 3 5-8`, `/retry`, `/settings`, `/set workers 5`, `/dir ~/Papers`. `Esc` stops a job; `Ctrl+C` twice quits.
+`/download 1 3 5-8`, `/settings`, `/set workers 5`, `/dir ~/Papers`. `Esc` stops a job; `Ctrl+C` twice quits; `↑↓` history, `Tab` completes a command, `Ctrl+L` clears.
+
+**When something fails you can redo it.** A dropped connection, an API error, a download that missed, rows that were not found, or a job you stopped with `Esc` all end with a plain-words message and a hint at the bottom: press `Ctrl+R` (or type `/retry`). A lookup retries only the ✗ rows, so rows that were found and the numbering stay as they are. `/retry list` shows what can be retried, `/retry download` picks one. A failed request never ends the session.
+
+**Change a row's DOI by hand:** `/fix 3` shows row 3's alternatives, `/fix 3 2` picks the second, `/fix 3 10.1021/xxxx` (or a doi.org link) sets a DOI, `/fix 3 -` clears it.
 
 ## Install and run
 

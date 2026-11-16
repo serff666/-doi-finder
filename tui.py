@@ -15,6 +15,7 @@ import os
 import queue
 import re
 import shutil
+import socket
 import sys
 import threading
 import time
@@ -79,6 +80,52 @@ def pad(s: str, w: int) -> str:
     return s + " " * max(0, w - width(s))
 
 
+def wrap_plain(text: str, w: int) -> list[str]:
+    """Word-wrap plain text to `w` cells (CJK counts double). Leading spaces are kept as an
+    indent; a token wider than the line (URL, a CJK run) is split by width instead of overflowing."""
+    lead = len(text) - len(text.lstrip(" "))
+    w = max(8, w - lead)
+    out: list[str] = []
+    cur, cur_w = "", 0
+    for word in text.lstrip(" ").split(" "):
+        ww = width(word)
+        if ww > w:
+            if cur:
+                out.append(cur)
+                cur, cur_w = "", 0
+            piece, piece_w = "", 0
+            for ch in word:
+                k = cw(ch)
+                if piece_w + k > w:
+                    out.append(piece)
+                    piece, piece_w = "", 0
+                piece += ch
+                piece_w += k
+            cur, cur_w = piece, piece_w
+            continue
+        if cur and cur_w + 1 + ww > w:
+            out.append(cur)
+            cur, cur_w = word, ww
+        else:
+            cur = f"{cur} {word}" if cur else word
+            cur_w += (1 if cur_w else 0) + ww
+    if cur or not out:
+        out.append(cur)
+    return [" " * lead + ln for ln in out]
+
+
+_STYLED_ROW = re.compile(r"((?:\x1b\[[0-9;]*m)*)([^\x1b]*)((?:\x1b\[[0-9;]*m)*)")
+
+
+def wrap_row(row: str, w: int) -> list[str]:
+    """Wrap a row that is plain text in one style; rows that mix styles (the numbered lists) are
+    already width-budgeted by their builders and pass through."""
+    m = _STYLED_ROW.fullmatch(row)
+    if not m or width(m.group(2)) <= w:
+        return [row]
+    return [m.group(1) + ln + m.group(3) for ln in wrap_plain(m.group(2), w)]
+
+
 def layout_input(buf: str, pos: int, tw: int) -> tuple[list[str], int, int]:
     """Hard-wrap a single-line buffer to tw cells. Returns rows and the cursor (row, col)."""
     tw = max(4, tw)
@@ -126,7 +173,7 @@ class _Parser:
     """Turns raw text into tokens: ("text", s) | ("key", name) | ("paste", s)."""
 
     CTRL = {"\x03": "ctrl-c", "\x04": "ctrl-d", "\x01": "home", "\x05": "end", "\x0b": "ctrl-k",
-            "\x15": "ctrl-u", "\x17": "ctrl-w", "\x0c": "ctrl-l", "\x7f": "backspace",
+            "\x15": "ctrl-u", "\x17": "ctrl-w", "\x0c": "ctrl-l", "\x12": "ctrl-r", "\x7f": "backspace",
             "\x08": "backspace", "\t": "tab", "\r": "enter", "\n": "enter"}
     CSI = {"A": "up", "B": "down", "C": "right", "D": "left", "H": "home", "F": "end"}
     TILDE = {"1": "home", "7": "home", "4": "end", "8": "end", "3": "delete"}
@@ -337,7 +384,8 @@ COMMANDS = [
     ("/search", T("按主题或作者检索", "search by topic or author")),
     ("/journal", T("抓取整本期刊的文章列表", "list every article of a journal")),
     ("/results", T("重新显示上一次的列表", "show the last list again")),
-    ("/retry", T("重试上次没下到的", "retry what the last download missed")),
+    ("/retry", T("重试失败的操作（Ctrl+R）", "retry what failed (Ctrl+R)")),
+    ("/fix", T("改某一行的 DOI：/fix 序号", "change a row's DOI: /fix N")),
     ("/settings", T("查看设置", "show settings")),
     ("/set", T("修改设置：/set 项 值", "change a setting: /set key value")),
     ("/dir", T("设置下载目录", "set the download folder")),
@@ -465,6 +513,32 @@ def first_clause(note: str, n: int = 60) -> str:
     return fit(str(note or "").split("；")[0].split("; ")[0], n)
 
 
+_NET_RE = re.compile(r"timed out|timeout|unreachable|refused|reset by peer|name or service|getaddrinfo|"
+                     r"temporary failure|\bssl\b|network|connection|broken pipe", re.I)
+
+
+def friendly(exc) -> str:
+    """One readable sentence for a failure, technical detail after it."""
+    detail = str(exc).strip() or type(exc).__name__
+    if isinstance(exc, (TimeoutError, ConnectionError, socket.timeout, urllib.error.URLError)) \
+            or _NET_RE.search(detail):
+        return T("网络不通或超时：", "Network problem or timeout: ") + detail
+    return detail
+
+
+_DOI_PREFIX = re.compile(r"^(?:https?://(?:dx\.)?doi\.org/|doi:\s*)", re.I)
+
+
+def normalize_doi(s: str) -> str:
+    """A bare lower-case DOI from what a person typed or pasted; "" if it is not one."""
+    d = _DOI_PREFIX.sub("", (s or "").strip()).rstrip(".,;)")
+    return d.lower() if re.fullmatch(r"10\.\d{4,9}/\S+", d) else ""
+
+
+RETRY_SLOTS = {"/download": "download", "/dl": "download", "/search": "search", "/journal": "journal"}
+RESOLVED = ("matched", "provided", "likely", "uncertain")
+
+
 # --------------------------------------------------------------------------- the app
 class App:
     SPIN = "·✢✳✶✻✽"
@@ -490,6 +564,9 @@ class App:
         self.default_dois: list[str] = []
         self.layout: dict | None = None   # journal harvest: file under Journal/Year/Volume
         self.last_failed: list[str] = []
+        self.retries: dict[str, dict] = {}     # slot -> {"label", "run", "seq"}: what Ctrl+R can redo
+        self.retry_seq = 0
+        self.lookup_text = ""                  # the last pasted list, for retrying its failed rows
         self.dl_dir = ""
         self.last_results: list[dict] = []
         self.settings: dict = {}
@@ -519,8 +596,11 @@ class App:
 
     def block(self, title: str, rows: list[str] | None = None, blank: bool = True) -> list[str]:
         lines = [f"{accent('⏺')} {bold(title)}"]
-        for i, r in enumerate(rows or []):
-            lines.append(("  ⎿  " if i == 0 else "     ") + r)
+        first = True
+        for r in rows or []:
+            for piece in wrap_row(r, max(20, self.size() - 6)):
+                lines.append(("  ⎿  " if first else "     ") + piece)
+                first = False
         if blank:
             lines.append("")
         return lines
@@ -529,7 +609,51 @@ class App:
         self.emit(self.block(title, rows, blank))
 
     def err(self, msg: str) -> None:
-        self.emit(self.block(red(T("出错", "Error")), [fit(str(msg), self.term_w - 8)]))
+        self.emit(self.block(red(T("出错", "Error")), [str(msg)]))
+
+    # ------------------------------------------------------------- failure and retry
+    def set_retry(self, slot: str, label: str, fn) -> None:
+        self.retry_seq += 1
+        self.retries[slot] = {"label": label, "run": fn, "seq": self.retry_seq}
+        self.dirty = True
+
+    def clear_retry(self, slot: str) -> None:
+        if self.retries.pop(slot, None) is not None:
+            self.dirty = True
+
+    def latest_retry(self):
+        if not self.retries:
+            return None
+        slot = max(self.retries, key=lambda k: self.retries[k]["seq"])
+        return slot, self.retries[slot]
+
+    def fail(self, slot: str, exc, label: str, fn) -> None:
+        """Show a failure in plain words and keep the action so Ctrl+R can redo it."""
+        self.set_retry(slot, label, fn)
+        self.emit(self.block(red(T("出错", "Error")), [
+            friendly(exc),
+            dim(T("Ctrl+R 或 /retry 重试：", "Ctrl+R or /retry to retry: ") + label)]))
+
+    def run_action(self, slot: str, label: str, fn) -> None:
+        try:
+            fn()
+        except Exception as e:  # noqa: BLE001 - a failed request must not end the session
+            self.fail(slot, e, label, fn)
+
+    def do_retry(self, slot: str | None = None) -> None:
+        if self.job:
+            self.say(T("正在运行任务", "A job is running"),
+                     [T("等它结束，或按 Esc 停止。", "Wait for it to finish, or press Esc to stop.")])
+            return
+        if slot is None:
+            latest = self.latest_retry()
+            slot = latest[0] if latest else None
+        ent = self.retries.pop(slot, None) if slot else None
+        if ent is None:
+            self.say(T("没有需要重试的", "Nothing to retry"))
+            return
+        self.emit(self.block(T("重试", "Retry") + dim("  " + ent["label"]), blank=False))
+        self.run_action(slot, ent["label"], ent["run"])
 
     # ------------------------------------------------------------- live region
     def display_buf(self) -> str:
@@ -575,6 +699,11 @@ class App:
             return T("Esc 停止当前任务", "Esc stops the running job")
         if self.quit_armed and time.time() - self.quit_armed < 2:
             return T("再按一次 Ctrl+C 退出", "press Ctrl+C again to quit")
+        latest = self.latest_retry()
+        if latest and not self.buf:
+            more = len(self.retries) - 1
+            return (T("Ctrl+R 重试：", "Ctrl+R retries: ") + latest[1]["label"]
+                    + (T(f"（还有 {more} 项，/retry list）", f" (+{more}, /retry list)") if more else ""))
         base = T("/ 命令 · 粘贴标题或 DOI 后回车", "/ commands · paste titles or DOIs, then Enter")
         d = short_dir(self.dl_dir) if self.dl_dir else ""
         return base + (f"   ▸ {d}" if d else "")
@@ -686,6 +815,8 @@ class App:
                 self.quit = True
         elif k == "ctrl-l":
             self.cmd_clear()
+        elif k == "ctrl-r":
+            self.do_retry()
 
     def reset_input(self) -> None:
         self.buf, self.pos, self.pastes, self.hist_i = "", 0, {}, -1
@@ -727,9 +858,9 @@ class App:
         if mode == "download":
             dois = list(dict.fromkeys(m.group(0).rstrip(".").lower() for m in DOI_RE.finditer(text)))
             self.layout = None
-            self.start_download(dois)
+            self.run_action("download", T("重新下载", "download again"), lambda: self.start_download(dois))
         else:
-            self.start_lookup(text)
+            self.run_action("lookup", T("重新查找", "look up again"), lambda: self.start_lookup(text))
 
     def command(self, text: str) -> None:
         parts = text.split()
@@ -738,7 +869,7 @@ class App:
             "/help": self.cmd_help, "/?": self.cmd_help,
             "/download": self.cmd_download, "/dl": self.cmd_download,
             "/search": self.cmd_search, "/journal": self.cmd_journal,
-            "/results": self.cmd_results, "/retry": self.cmd_retry,
+            "/results": self.cmd_results, "/retry": self.cmd_retry, "/fix": self.cmd_fix,
             "/settings": self.cmd_settings, "/set": self.cmd_set, "/dir": self.cmd_dir,
             "/open": self.cmd_open, "/clear": self.cmd_clear,
             "/quit": self.cmd_quit, "/exit": self.cmd_quit,
@@ -751,12 +882,18 @@ class App:
         try:
             fn(args)
         except Exception as e:  # noqa: BLE001
-            self.err(f"{type(e).__name__}: {e}")
+            slot = RETRY_SLOTS.get(name)
+            if slot:
+                self.fail(slot, e, T("重新执行 ", "run again: ") + fit(text, 40), lambda: self.command(text))
+            else:
+                self.err(friendly(e))
 
     def cmd_help(self, args=None) -> None:
         rows = [accent(pad(n, 11)) + d for n, d in COMMANDS]
         rows += ["",
                  T("直接粘贴多行标题 → 查 DOI；粘贴 DOI → 直接下载。", "Paste titles → find DOIs; paste DOIs → download."),
+                 T("按键：Ctrl+R 重试失败的 · Esc 停止 · ↑↓ 历史 · Tab 补全命令 · Ctrl+L 清屏 · Ctrl+C 两次退出",
+                   "Keys: Ctrl+R retry what failed · Esc stop · ↑↓ history · Tab complete · Ctrl+L clear · Ctrl+C twice quits"),
                  T("检索/期刊的结果带序号：/download 1 3 5-8", "Search and journal lists are numbered: /download 1 3 5-8"),
                  T("检索选项：--oa  --year 2020-2024  --author 姓名  --orcid 号", "Search options: --oa  --year 2020-2024  --author NAME  --orcid ID"),
                  T("期刊选项：/journal 期刊名或ISSN 2011-2024 [--all|--research|--review]", "Journal: /journal NAME-or-ISSN 2011-2024 [--all|--research|--review]")]
@@ -828,39 +965,50 @@ class App:
         self.say(T(f"已保存 {args[0]}", f"Saved {args[0]}"), [shown])
 
     # ------------------------------------------------------------- jobs
-    def begin(self, kind: str, jid: str, label: str, total: int = 0) -> None:
+    SLOT = {"lookup": "lookup", "download": "download", "harvest": "journal"}
+
+    def begin(self, kind: str, jid: str, label: str, total: int = 0, retry=None, rlabel: str = "") -> None:
+        self.clear_retry(self.SLOT.get(kind, kind))        # being redone now
         self.job = {"kind": kind, "id": jid, "label": label, "t0": time.time(),
-                    "done": 0, "total": total, "current": "", "stopping": False}
+                    "done": 0, "total": total, "current": "", "stopping": False,
+                    "retry": retry, "rlabel": rlabel}
         self.dirty = True
         threading.Thread(target=self._poll, args=(self.job,), daemon=True).start()
 
     def _poll(self, job: dict) -> None:
         d: dict = {}
         fails = 0
-        while True:
-            try:
-                d = self.api.get(f"/api/job/{job['id']}")
-                fails = 0
-            except Exception as e:  # noqa: BLE001
-                fails += 1
-                if fails > 5:
-                    d = {"state": "error", "error": str(e)}
+        try:
+            while True:
+                try:
+                    d = self.api.get(f"/api/job/{job['id']}")
+                    fails = 0
+                except Exception as e:  # noqa: BLE001
+                    fails += 1
+                    if fails > 5:
+                        d = {"state": "error", "error": friendly(e)}
+                        break
+                    time.sleep(0.6)
+                    continue
+                job["done"] = d.get("done", 0)
+                job["total"] = d.get("total", 0) or job.get("total", 0)
+                cur = d.get("current") or d.get("markdown") or ""
+                job["current"] = cur
+                if d.get("state") in ("done", "stopped", "error"):
                     break
-                time.sleep(0.6)
-                continue
-            job["done"] = d.get("done", 0)
-            job["total"] = d.get("total", 0) or job.get("total", 0)
-            cur = d.get("current") or d.get("markdown") or ""
-            job["current"] = cur
-            if d.get("state") in ("done", "stopped", "error"):
-                break
-            time.sleep(0.4)
+                time.sleep(0.4)
+        except Exception as e:  # noqa: BLE001 - whatever happens, the spinner must end
+            d = {"state": "error", "error": f"{type(e).__name__}: {e}"}
         self.q.put(("finish", job, d))
 
-    def async_task(self, label: str, work, done) -> None:
-        """Run a slow call off the UI thread; `done(result)` runs back on it."""
+    def async_task(self, label: str, work, done, slot: str = "", retry=None, rlabel: str = "") -> None:
+        """Run a slow call off the UI thread; `done(result)` runs back on it.
+
+        With `retry`, a failure is reported together with a way to redo it (Ctrl+R)."""
+        if slot:
+            self.clear_retry(slot)
         job = {"kind": "task", "id": "", "label": label, "t0": time.time(), "done": 0, "total": 0,
-               "current": "", "stopping": False}
+               "current": "", "stopping": False, "slot": slot, "retry": retry, "rlabel": rlabel}
         self.job = job
         self.dirty = True
 
@@ -906,7 +1054,10 @@ class App:
                 if job.get("stopping"):
                     self.emit(self.block(T("已停止", "Stopped")))
                 elif exc is not None:
-                    self.err(exc)
+                    if job.get("retry"):
+                        self.fail(job["slot"], exc, job["rlabel"], job["retry"])
+                    else:
+                        self.err(friendly(exc))
                 else:
                     try:
                         done(result)
@@ -915,19 +1066,79 @@ class App:
 
     def finish(self, job: dict, d: dict) -> None:
         if d.get("state") == "error":
-            self.err(d.get("error") or T("任务失败", "job failed"))
+            msg = d.get("error") or T("任务失败", "job failed")
+            if job.get("retry"):
+                self.fail(self.SLOT.get(job["kind"], job["kind"]), msg, job["rlabel"], job["retry"])
+            else:
+                self.err(msg)
             return
         {"lookup": self.finish_lookup, "download": self.finish_download,
          "harvest": self.finish_harvest}[job["kind"]](job, d)
 
     # --- lookup
-    def start_lookup(self, text: str) -> None:
+    def start_lookup(self, text: str, idx: list[int] | None = None) -> None:
+        """Look up `text`. With `idx`, `text` holds only those rows of the last list (a retry)
+        and the new results are spliced back into their original places."""
+        if idx is None:
+            self.lookup_text = text
         s = self.settings or self.load_settings()
         r = self.api.post("/api/lookup", {"text": text, "mode": "auto", "mailto": s.get("email", "")})
-        self.begin("lookup", r["job_id"], T("查找 DOI", "Finding DOIs"), r.get("total", 0))
+        self.begin("lookup", r["job_id"], T("重试查找" if idx is not None else "查找 DOI",
+                                            "Retrying lookup" if idx is not None else "Finding DOIs"),
+                   r.get("total", 0), retry=lambda: self.start_lookup(text, idx),
+                   rlabel=T("重新查找", "look up again"))
+        self.job["merge"] = idx
+
+    def unresolved(self) -> list[int]:
+        return [i for i, r in enumerate(self.last_results)
+                if r.get("status") in ("error", "not_found", "stopped")]
+
+    def rerun_lookup(self) -> None:
+        idx = self.unresolved()
+        if not idx:
+            self.say(T("没有需要重试的", "Nothing to retry"))
+            return
+        import citeparse
+        inputs = [(self.last_results[i].get("input") or "").strip() for i in idx]
+        # A pasted .bib / .ris keeps year and author in fields a single line cannot carry,
+        # so it is re-sent whole (finished rows come back from the lookup cache).
+        if not self.lookup_text or not all(inputs) or citeparse.parse_structured(self.lookup_text):
+            self.start_lookup(self.lookup_text, None)
+        else:
+            self.start_lookup("\n".join(inputs), idx)
+
+    def arm_lookup_retry(self) -> int:
+        n = len(self.unresolved())
+        if n:
+            self.set_retry("lookup", T(f"重新查找 ✗ 的 {n} 条", f"look up the {n} ✗ rows again"),
+                           self.rerun_lookup)
+        else:
+            self.clear_retry("lookup")
+        return n
+
+    def rebuild_defaults(self) -> None:
+        self.default_dois = [x["doi"] for x in self.listing
+                             if x["doi"] and x["status"] in ("matched", "provided", "likely")]
 
     def finish_lookup(self, job: dict, d: dict) -> None:
         res = d.get("results") or []
+        merge = job.get("merge")
+        found_now = None
+        if merge is not None:
+            if len(res) != len(merge) or (merge and max(merge) >= len(self.last_results)):
+                # never splice results into the wrong rows
+                self.fail("lookup", T("返回的行数对不上，已保留原来的列表",
+                                      "Row count mismatch; the earlier list was kept"),
+                          T("重新查找整份", "look up the whole list again"),
+                          lambda: self.start_lookup(self.lookup_text, None))
+                return
+            full = list(self.last_results)
+            found_now = 0
+            for j, i in enumerate(merge):
+                if res[j].get("doi") and not full[i].get("doi"):
+                    found_now += 1
+                full[i] = res[j]
+            res = full
         self.last_results = res
         counts: dict[str, int] = {}
         for r in res:
@@ -939,20 +1150,33 @@ class App:
         self.listing = [{"doi": r.get("doi", ""), "title": r.get("input") or r.get("title") or "",
                          "status": r.get("status"), "score": r.get("score", 0), "year": r.get("year"),
                          "note": r.get("note", "")} for r in res]
-        self.default_dois = [x["doi"] for x in self.listing
-                             if x["doi"] and x["status"] in ("matched", "provided", "likely")]
+        self.rebuild_defaults()
         self.layout = None
         head = " · ".join(filter(None, [
             green(f"✓ {ok}") if ok else "", yellow(f"◐ {lik}") if lik else "",
             yellow(f"? {unc}") if unc else "", red(f"✗ {bad}") if bad else ""])) or T("没有结果", "no results")
         if d.get("state") == "stopped":
             head += dim(T("   （已停止，结果不全）", "   (stopped, partial)"))
+        if found_now is not None:
+            head += dim(T(f"   本次重试找到 {found_now} 条", f"   retry found {found_now}"))
         rows = [head] + self.list_rows()
         tail = []
         if self.default_dois:
             tail.append(dim(T(f"/download 下载其中 {len(self.default_dois)} 个已匹配的；/download all 连同需核对的",
                               f"/download fetches the {len(self.default_dois)} matched ones; /download all includes the uncertain")))
-        self.emit(self.block(T("标题 → DOI", "Title → DOI") + dim(f"  {len(res)}"), rows + tail))
+        n_err = counts.get("error", 0)
+        if n_err:
+            tail.append(yellow(T(f"{n_err} 条是网络或接口出错，不代表没有这篇",
+                                 f"{n_err} failed on a network/API error — that does not mean the paper is missing")))
+        n_open = self.arm_lookup_retry()
+        if n_open or unc or lik:
+            parts = []
+            if n_open:
+                parts.append(T(f"Ctrl+R 重试 ✗ 的 {n_open} 条", f"Ctrl+R retries the {n_open} ✗ rows"))
+            parts.append(T("/fix 序号 看备选或手动指定 DOI", "/fix N shows alternatives or sets a DOI by hand"))
+            tail.append(dim(" · ".join(parts)))
+        self.emit(self.block((T("重试查找", "Retried") if merge is not None else T("标题 → DOI", "Title → DOI"))
+                             + dim(f"  {len(res)}"), rows + tail))
 
     def list_rows(self, limit: int = 40) -> list[str]:
         avail = self.term_w - 1 - 5          # transcript indent ("  ⎿  ")
@@ -988,6 +1212,80 @@ class App:
             return
         self.say(T("上一次的列表", "Last list"), self.list_rows(10 ** 6 if args and args[0] == "all" else 40))
 
+    # --- fix one row of a Title -> DOI list
+    def cmd_fix(self, args: list[str]) -> None:
+        if not (self.listing and "status" in self.listing[0] and len(self.last_results) == len(self.listing)):
+            self.say(T("/fix 只用于「标题 → DOI」的结果", "/fix works on a Title → DOI list"),
+                     [T("先粘贴标题查一遍。", "Paste titles first.")])
+            return
+        n = len(self.listing)
+        if not args or not args[0].isdigit() or not 1 <= int(args[0]) <= n:
+            self.say(T("用法：/fix 序号 [备选序号 | DOI | -]", "Usage: /fix N [alt-number | DOI | -]"),
+                     [T(f"序号在 1 到 {n} 之间", f"N is 1–{n}")])
+            return
+        i = int(args[0]) - 1
+        r = self.last_results[i]
+        alts = r.get("alts") or []
+        if len(args) == 1:
+            self.show_fix(i, r, alts)
+            return
+        rest = " ".join(args[1:]).strip()
+        picked = None
+        if rest == "-":
+            doi = ""
+        elif rest.isdigit():
+            k = int(rest)
+            if not 1 <= k <= len(alts):
+                self.say(T(f"没有第 {k} 个备选", f"There is no alternative {k}"),
+                         [T(f"/fix {i + 1} 看看有哪些", f"/fix {i + 1} lists them")])
+                return
+            picked = alts[k - 1]
+            # the engine's own DOI: tidy it if it parses, otherwise keep it as is rather than lose it
+            doi = normalize_doi(picked.get("doi") or "") or (picked.get("doi") or "").strip().lower()
+            if not doi:
+                self.say(T(f"备选 {k} 没有 DOI", f"Alternative {k} has no DOI"))
+                return
+        else:
+            doi = normalize_doi(rest)
+            if not doi:
+                self.say(T("这不是一个 DOI", "That is not a DOI"),
+                         [T("形如 10.1021/jacs.1c00001，也可以直接粘贴 https://doi.org/… 链接。",
+                            "Like 10.1021/jacs.1c00001; a https://doi.org/… link works too.")])
+                return
+        r["doi"] = doi
+        r["status"] = "provided" if doi else "not_found"
+        r["manual"] = True
+        r["note"] = T("手动指定", "set by hand") if doi else T("手动清除", "cleared by hand")
+        if picked:
+            r["year"] = picked.get("year") or r.get("year")
+            r["match_title"] = picked.get("title") or r.get("match_title")
+        x = self.listing[i]
+        x.update(doi=doi, status=r["status"], note=r["note"], year=r.get("year"), score=0)
+        self.rebuild_defaults()
+        if "lookup" in self.retries or self.unresolved():
+            self.arm_lookup_retry()
+        shown = self.list_rows(10 ** 6)[i]
+        self.say(T(f"第 {i + 1} 行已更新", f"Row {i + 1} updated"),
+                 [shown, dim(T("DOI 没有联网核对，下载时会验证。", "The DOI was not checked online; the download will test it."))
+                  if doi else dim(T("已清除，下载时会跳过这一行。", "Cleared; the download skips this row."))])
+
+    def show_fix(self, i: int, r: dict, alts: list[dict]) -> None:
+        w = self.term_w - 8
+        rows = [fit(r.get("input") or r.get("title") or "", w)]
+        cur = r.get("doi") or ""
+        rows.append((T("现在 ", "now  ") + (f"{mark(r.get('status') or 'matched')} {cur}" if cur else red("✗ ") + dim(T("没有 DOI", "no DOI"))))
+                    + (dim(f"  {first_clause(r.get('note'), max(10, w - len(cur) - 12))}") if r.get("note") else ""))
+        for k, a in enumerate(alts, 1):
+            rows.append(f"{accent(str(k))}  {fit(a.get('title') or '', w - 3)}")
+            meta = " · ".join(filter(None, [a.get("first_author"), str(a.get("year") or ""), a.get("journal"), a.get("doi")]))
+            sc = f"  ({a['score']:.2f})" if isinstance(a.get("score"), (int, float)) else ""
+            rows.append("   " + dim(fit(meta + sc, w - 3)))
+        if not alts:
+            rows.append(dim(T("没有备选记录。", "No alternatives on record.")))
+        rows.append(dim(T(f"/fix {i + 1} 2 选第 2 个 · /fix {i + 1} 10.1021/xxx 手动指定 · /fix {i + 1} - 清除",
+                          f"/fix {i + 1} 2 picks the 2nd · /fix {i + 1} 10.1021/xxx sets a DOI · /fix {i + 1} - clears")))
+        self.say(T(f"第 {i + 1} 行", f"Row {i + 1}"), rows)
+
     # --- download
     def cmd_download(self, args: list[str]) -> None:
         if args:
@@ -1014,7 +1312,8 @@ class App:
             body["layout"] = {"journal": self.layout["journal"],
                               "items": [it for it in self.layout["items"] if (it.get("doi") or "").lower() in want]}
         r = self.api.post("/api/download", body)
-        self.begin("download", r["job_id"], T("下载 PDF", "Downloading PDFs"), r.get("total", len(dois)))
+        self.begin("download", r["job_id"], T("下载 PDF", "Downloading PDFs"), r.get("total", len(dois)),
+                   retry=lambda: self.start_download(dois), rlabel=T(f"重新下载 {len(dois)} 个", f"download {len(dois)} again"))
 
     def finish_download(self, job: dict, d: dict) -> None:
         res = d.get("results") or []
@@ -1039,16 +1338,34 @@ class App:
         if d.get("dest"):
             rows.append(dim(T("保存在 ", "saved to ") + short_dir(d["dest"])))
         if self.last_failed:
-            rows.append(dim(T("/retry 重试没下到的 · /open 打开目录", "/retry tries the missed ones · /open opens the folder")))
+            todo = list(self.last_failed)
+            label = (T(f"继续下载剩下的 {len(todo)} 个", f"resume the remaining {len(todo)}") if not miss
+                     else T(f"重新下载 {len(todo)} 个", f"download {len(todo)} again"))
+            self.set_retry("download", label, lambda: self.start_download(todo))
+            rows.append(dim(T("Ctrl+R 重试没下到的 · /open 打开目录", "Ctrl+R retries the missed ones · /open opens the folder")))
         else:
             rows.append(dim(T("/open 打开目录", "/open opens the folder")))
         self.emit(self.block(T("下载 PDF", "Download PDFs") + dim(f"  {len(res)}"), rows))
 
     def cmd_retry(self, args=None) -> None:
-        if not self.last_failed:
-            self.say(T("没有需要重试的", "Nothing to retry"))
+        args = args or []
+        if args and args[0].lower() in ("list", "ls", "?"):
+            if not self.retries:
+                self.say(T("没有需要重试的", "Nothing to retry"))
+                return
+            order = sorted(self.retries.items(), key=lambda kv: -kv[1]["seq"])
+            self.say(T("可重试的", "Can be retried"),
+                     [f"{accent(pad(k, 9))}{v['label']}" for k, v in order]
+                     + [dim(T("/retry 名称 重试指定的一项；Ctrl+R 重试最近的", "/retry NAME retries that one; Ctrl+R the latest"))])
             return
-        self.start_download(list(self.last_failed))
+        slot = None
+        if args:
+            slot = args[0].lower()
+            if slot not in self.retries:
+                self.say(T("没有这一项可重试", "Nothing to retry under that name"),
+                         [T("/retry list 看看有哪些", "/retry list shows what is available")])
+                return
+        self.do_retry(slot)
 
     # --- search
     def cmd_search(self, args: list[str]) -> None:
@@ -1060,7 +1377,8 @@ class App:
         a["email"] = (self.settings or self.load_settings()).get("email", "")
         a["limit"] = 40
         self.async_task(T("检索中", "Searching"), lambda: self.api.post("/api/search", a, timeout=90),
-                        lambda r: self.show_search(a, r))
+                        lambda r: self.show_search(a, r), slot="search",
+                        retry=lambda: self.cmd_search(args), rlabel=T("重新检索", "search again"))
 
     def show_search(self, a: dict, r: dict) -> None:
         works = r.get("works") or []
@@ -1096,18 +1414,25 @@ class App:
                 self.err(T("没找到这本期刊，换个写法或直接给 ISSN。", "Journal not found; try another spelling or give the ISSN."))
                 return
             self.start_harvest(hit["issn"], hit.get("title") or a["name"], a)
-        self.async_task(T("解析期刊名", "Resolving journal"), work, done)
+        self.async_task(T("解析期刊名", "Resolving journal"), work, done, slot="journal",
+                        retry=lambda: self.cmd_journal(args), rlabel=T("重新解析期刊名", "resolve the journal again"))
 
     def start_harvest(self, issn: str, title: str, a: dict) -> None:
         self.pending_journal = {"title": title, "kind": a["kind"]}
         r = self.api.post("/api/journal/harvest", {"issn": issn, "year_from": a["year_from"], "year_to": a["year_to"]})
-        self.begin("harvest", r["job_id"], T(f"抓取 {fit(title, 40)}", f"Fetching {fit(title, 40)}"), 0)
+        self.begin("harvest", r["job_id"], T(f"抓取 {fit(title, 40)}", f"Fetching {fit(title, 40)}"), 0,
+                   retry=lambda: self.start_harvest(issn, title, a), rlabel=T("重新抓取期刊", "fetch the journal again"))
 
     def finish_harvest(self, job: dict, d: dict) -> None:
         items = [x for x in (d.get("items") or []) if x.get("doi")]
         info = getattr(self, "pending_journal", {"title": "", "kind": "noncorr"})
         if not items:
-            self.err(d.get("error") or T("没有抓到文章", "no articles found"))
+            retry = job.get("retry")
+            msg = d.get("error") or T("没有抓到文章", "no articles found")
+            if retry:
+                self.fail("journal", msg, job["rlabel"], retry)
+            else:
+                self.err(msg)
             return
         self.layout = {"journal": info["title"], "items": items}
         self.listing = [{"doi": x["doi"], "title": x.get("title") or "", "year": x.get("year")} for x in items]
@@ -1154,7 +1479,10 @@ class App:
         try:
             while not self.quit:
                 for kind, val in keys.read(0.08):
-                    self.on_token(kind, val)
+                    try:
+                        self.on_token(kind, val)
+                    except Exception as e:  # noqa: BLE001 - no key press may end the session
+                        self.err(friendly(e))
                 self.drain()
                 now = time.time()
                 if self.job and now - last_spin > 0.12:

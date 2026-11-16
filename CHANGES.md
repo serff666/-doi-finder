@@ -6,6 +6,8 @@
 
 **2.1.1 (takeover):** restored the email input, fixed `/api/jobs`, archive path guard, front-matter filter in harvest, cross-platform helpers, LF line endings, tests + CI. Also: translation code fully removed, lint (ruff F/E9) clean, dead harvest JS removed, journal tab ⑨ now has a type filter (research / review / exclude corrections) that sets the default selection and shows a type column. Still unverified: real Crossref harvest, real downloads and the live UI (no network in the build sandbox).
 
+**Terminal client, failures:** a failed request no longer ends the session (a dropped connection while pasting a list used to exit the program and lose the list); every failure gets a plain-words message and a retry on `Ctrl+R` / `/retry` (download misses, lookup rows that were not found, search, journal, jobs ended by error or stopped with Esc); a lookup retries only the unresolved rows and splices them back so the numbering holds; `/fix N` picks an alternative or sets a DOI by hand.
+
 This file lists what was changed in this build and, just as importantly, what does
 not work yet. It is meant to be read before continuing development.
 
