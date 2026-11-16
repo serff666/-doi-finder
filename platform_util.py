@@ -91,3 +91,90 @@ def kill_browser_using_profile(profile_dir: str) -> None:
 
 def curl_bin() -> str:
     return "curl.exe" if IS_WIN else "curl"
+
+
+# ---- file / folder pickers -------------------------------------------------------------
+# The server answers from an HTTP worker thread. A Tk window opened there is unreliable in
+# the packaged Windows app (the dialog may never appear), so Windows uses the system dialogs
+# through PowerShell on its own STA thread; elsewhere Tk is used. Both block until the user
+# answers and return "" / [] when the dialog is cancelled.
+
+_PS_PICK = r"""
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+Add-Type -AssemblyName System.Windows.Forms
+[System.Windows.Forms.Application]::EnableVisualStyles()
+$owner = New-Object System.Windows.Forms.Form
+$owner.TopMost = $true; $owner.ShowInTaskbar = $false; $owner.Opacity = 0
+$owner.StartPosition = 'CenterScreen'; $owner.Show()
+if ($env:DF_KIND -eq 'folder') {
+  $d = New-Object System.Windows.Forms.FolderBrowserDialog
+  $d.Description = $env:DF_TITLE
+  if ($env:DF_INITIAL -and (Test-Path -LiteralPath $env:DF_INITIAL)) { $d.SelectedPath = $env:DF_INITIAL }
+  if ($d.ShowDialog($owner) -eq 'OK') { Write-Output $d.SelectedPath }
+} else {
+  $d = New-Object System.Windows.Forms.OpenFileDialog
+  $d.Title = $env:DF_TITLE; $d.Filter = $env:DF_FILTER
+  $d.Multiselect = ($env:DF_MULTI -eq '1')
+  if ($d.ShowDialog($owner) -eq 'OK') { $d.FileNames | ForEach-Object { Write-Output $_ } }
+}
+$owner.Close()
+"""
+
+
+def _powershell_pick(kind: str, title: str, initial: str = "", filter_: str = "",
+                     multi: bool = False) -> list[str]:
+    env = dict(os.environ, DF_KIND=kind, DF_TITLE=title, DF_INITIAL=initial or "",
+               DF_FILTER=filter_ or "所有文件|*.*", DF_MULTI="1" if multi else "0")
+    r = subprocess.run(["powershell", "-STA", "-NoProfile", "-NonInteractive", "-Command", _PS_PICK],
+                       capture_output=True, env=env, timeout=1800, creationflags=NO_WINDOW)
+    if r.returncode != 0:
+        raise RuntimeError((r.stderr or b"").decode("utf-8", "replace").strip() or "PowerShell failed")
+    out = (r.stdout or b"").decode("utf-8", "replace")
+    return [ln.strip() for ln in out.splitlines() if ln.strip()]
+
+
+def _tk_pick(kind: str, title: str, initial: str = "", patterns: tuple = (), multi: bool = False) -> list[str]:
+    import tkinter as tk
+    from tkinter import filedialog
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+    try:
+        if kind == "folder":
+            got = filedialog.askdirectory(title=title, initialdir=initial or None)
+            return [got] if got else []
+        types = [(n, pat.replace(";", " ")) for n, pat in patterns] + [("所有文件", "*.*")]
+        if multi:
+            return list(filedialog.askopenfilenames(title=title, filetypes=types) or ())
+        got = filedialog.askopenfilename(title=title, filetypes=types)
+        return [got] if got else []
+    finally:
+        root.destroy()
+
+
+def _filter_string(patterns: tuple) -> str:
+    parts = [f"{name}|{pat}" for name, pat in patterns] + ["所有文件|*.*"]
+    return "|".join(parts)
+
+
+def pick_folder(title: str, initial: str = "") -> str:
+    """Ask the user for a folder. "" when cancelled; raises if no dialog can be shown."""
+    if IS_WIN:
+        try:
+            got = _powershell_pick("folder", title, initial)
+            return got[0] if got else ""
+        except Exception:  # noqa: BLE001  - fall back to Tk
+            pass
+    got = _tk_pick("folder", title, initial)
+    return got[0] if got else ""
+
+
+def pick_files(title: str, patterns: tuple = (), multi: bool = False) -> list[str]:
+    """Ask the user for file(s). patterns: (("PDF", "*.pdf"), ...). [] when cancelled."""
+    if IS_WIN:
+        try:
+            return _powershell_pick("file", title, filter_=_filter_string(patterns), multi=multi)
+        except Exception:  # noqa: BLE001  - fall back to Tk
+            pass
+    return _tk_pick("file", title, patterns=patterns, multi=multi)

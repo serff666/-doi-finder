@@ -746,16 +746,7 @@ class Handler(BaseHTTPRequestHandler):
                  if isinstance(p, str) and p.lower().endswith(".pdf") and os.path.isfile(p)]
         if not paths:
             try:
-                import tkinter as tk
-                from tkinter import filedialog
-                root = tk.Tk()
-                root.withdraw()
-                root.attributes("-topmost", True)
-                picked = filedialog.askopenfilenames(
-                    title="选择要归档的 PDF（可多选）",
-                    filetypes=[("PDF", "*.pdf"), ("所有文件", "*.*")]) or ()
-                root.destroy()
-                paths = list(picked)
+                paths = platform_util.pick_files("选择要归档的 PDF（可多选）", (("PDF", "*.pdf"),), multi=True)
             except Exception as e:  # noqa: BLE001
                 return {"error": f"无法打开文件选择器：{e}"}
         if not paths:
@@ -868,15 +859,8 @@ class Handler(BaseHTTPRequestHandler):
         src = (body.get("path") or "").strip()
         if not src:
             try:
-                import tkinter as tk
-                from tkinter import filedialog
-                root = tk.Tk()
-                root.withdraw()
-                root.attributes("-topmost", True)
-                src = filedialog.askopenfilename(
-                    title=f"选择 {doi} 的 PDF / CAJ",
-                    filetypes=[("PDF / CAJ", "*.pdf *.caj"), ("所有文件", "*.*")]) or ""
-                root.destroy()
+                got = platform_util.pick_files(f"选择 {doi} 的 PDF / CAJ", (("PDF / CAJ", "*.pdf;*.caj"),))
+                src = got[0] if got else ""
             except Exception as e:  # noqa: BLE001
                 return {"error": f"无法打开文件选择器：{e}"}
         if not src:
@@ -1570,14 +1554,8 @@ class Handler(BaseHTTPRequestHandler):
 
         if p == "/api/pick-folder":
             try:
-                import tkinter as tk
-                from tkinter import filedialog
-                root = tk.Tk()
-                root.withdraw()
-                root.attributes("-topmost", True)
-                path = filedialog.askdirectory(title="选择下载文件夹",
-                                               initialdir=body.get("initial") or load_settings()["download_dir"])
-                root.destroy()
+                path = platform_util.pick_folder("选择下载文件夹",
+                                                 body.get("initial") or load_settings()["download_dir"])
                 return self._json({"path": path or ""})
             except Exception as e:  # noqa: BLE001
                 return self._json({"error": f"无法打开文件夹选择器：{e}"}, 501)
