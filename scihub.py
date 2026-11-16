@@ -205,10 +205,11 @@ def pdf_url_from_html(page_url: str, text: str) -> str | None:
 class _Session:
     """A cookie-keeping opener that tolerates broken mirror certificates."""
 
-    def __init__(self):
+    def __init__(self, insecure: bool = False):
         ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
+        if insecure:  # opt-in only (Settings): some mirrors serve expired/self-signed certificates
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
         self.jar = http.cookiejar.CookieJar()
         self.opener = urllib.request.build_opener(
             urllib.request.HTTPSHandler(context=ctx),
@@ -261,7 +262,8 @@ class _Session:
 class Client:
     def __init__(self, mirrors: list[str] | None = None, scinet: str = DEFAULT_SCINET,
                  timeout: float = 30, stats: dict | None = None,
-                 stats_lock: threading.Lock | None = None):
+                 stats_lock: threading.Lock | None = None, insecure: bool = False):
+        self.insecure = bool(insecure)
         self.mirrors = [m.strip().rstrip("/") for m in (mirrors or DEFAULT_MIRRORS) if (m or "").strip()]
         self.scinet = (scinet or DEFAULT_SCINET).strip().rstrip("/")
         self.timeout = timeout
@@ -274,7 +276,7 @@ class Client:
     def session(self) -> _Session:
         # one cookie jar per thread: a solved ALTCHA must stick to that mirror
         if not hasattr(self._local, "sess"):
-            self._local.sess = _Session()
+            self._local.sess = _Session(self.insecure)
         return self._local.sess
 
     # ---------------- mirror health ordering ----------------
@@ -505,13 +507,13 @@ STATS: dict[str, dict[str, int]] = {}
 
 
 def client(mirrors: list[str] | None = None, scinet: str = DEFAULT_SCINET,
-           timeout: float = 30) -> Client:
-    """One shared client per (mirror list, scinet) combination so stats accumulate."""
+           timeout: float = 30, insecure: bool = False) -> Client:
+    """One shared client per (mirror list, scinet, tls mode) so stats accumulate."""
     global _CLIENT, _CLIENT_KEY
-    key = (tuple(mirrors or DEFAULT_MIRRORS), scinet or DEFAULT_SCINET, int(timeout))
+    key = (tuple(mirrors or DEFAULT_MIRRORS), scinet or DEFAULT_SCINET, int(timeout), bool(insecure))
     with _LOCK:
         if _CLIENT is None or _CLIENT_KEY != key:
-            _CLIENT = Client(mirrors=key[0], scinet=key[1], timeout=timeout, stats=STATS)
+            _CLIENT = Client(mirrors=key[0], scinet=key[1], timeout=timeout, stats=STATS, insecure=key[3])
             _CLIENT_KEY = key
         return _CLIENT
 
@@ -542,7 +544,7 @@ def _priority(mirror: str) -> int:
 
 def fetch(doi: str, mirrors: list[str] | None = None, scinet: str = DEFAULT_SCINET,
           timeout: float = 30, discover: bool = True,
-          should_stop=None, budget: float = 90.0) -> tuple[bytes | None, str, str, str]:
+          should_stop=None, budget: float = 90.0, insecure: bool = False) -> tuple[bytes | None, str, str, str]:
     """Resolve and download one DOI via Sci-Hub / Sci-Net.
 
     Returns (pdf_bytes, error_text, source_label, page_url). pdf_bytes is None on
@@ -565,7 +567,7 @@ def fetch(doi: str, mirrors: list[str] | None = None, scinet: str = DEFAULT_SCIN
             chosen = merged
     chosen = sorted(chosen, key=_priority)
 
-    c = client(chosen, scinet, timeout)
+    c = client(chosen, scinet, timeout, insecure=insecure)
     doi_q = urllib.parse.quote(doi, safe="/")
     errors: list[str] = []
     captcha = ddos = False

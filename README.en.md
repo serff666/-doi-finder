@@ -75,7 +75,7 @@ On the whole-journal tab, a panel can show a journal's average / median review t
 - All keys live only in `%LOCALAPPDATA%\DOIFinder\settings.json` on your machine. Nothing is uploaded and nothing is bundled into the installer.
 - This repository contains no keys; every field in `settings.example.json` is empty.
 - Elsevier API keys and Wiley TDM tokens are issued to individual accounts and must not be shared.
-- The Sci-Hub fallback is **on by default and tried first** (turn it off in the download tab). Whether using it is lawful depends on where you are; you are responsible for your own use. It connects to third-party mirrors without certificate verification, so do not enable it on untrusted networks.
+- The Sci-Hub fallback is **on by default and tried first** (turn it off in the download tab). Whether using it is lawful depends on where you are; you are responsible for your own use. Mirror certificates are verified by default; a Settings checkbox can skip verification for mirrors with expired certificates, which you should only do on a trusted network.
 - The institutional channel reuses your own browser session; the app never stores your password.
 
 ## Troubleshooting

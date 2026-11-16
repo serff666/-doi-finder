@@ -110,6 +110,7 @@ DEFAULT_SETTINGS = {
     "scihub_mirrors": "\n".join(scihub.DEFAULT_MIRRORS),
     "scinet": scihub.DEFAULT_SCINET,
     "scihub_timeout": 30,
+    "scihub_insecure_tls": False,   # True = skip certificate checks for Sci-Hub mirrors (off by default)
     "download_workers": 3,
     # institutional access: a real Chrome window the user logs into once
     "inst_enable": True,
@@ -329,7 +330,8 @@ def scihub_conf(opts: dict) -> dict:
     return {"enabled": enabled,
             "mirrors": mirrors or list(scihub.DEFAULT_MIRRORS),
             "scinet": s.get("scinet") or scihub.DEFAULT_SCINET,
-            "timeout": float(s.get("scihub_timeout") or 30)}
+            "timeout": float(s.get("scihub_timeout") or 30),
+            "insecure": bool(s.get("scihub_insecure_tls"))}
 
 
 def inst_conf(opts: dict) -> dict:
@@ -1390,7 +1392,7 @@ class Handler(BaseHTTPRequestHandler):
             def probe(mirror: str) -> dict:
                 t0 = time.time()
                 try:
-                    status, _b, _u, _ct = scihub.Client(mirrors=[mirror], timeout=8).session.get(mirror)
+                    status, _b, _u, _ct = scihub.Client(mirrors=[mirror], timeout=8, insecure=bool(load_settings().get("scihub_insecure_tls"))).session.get(mirror)
                     return {"mirror": mirror, "status": status, "ok": status < 500,
                             "ms": int((time.time() - t0) * 1000)}
                 except Exception as e:  # noqa: BLE001
