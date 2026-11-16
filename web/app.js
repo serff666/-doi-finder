@@ -995,6 +995,7 @@ window.addEventListener("unhandledrejection", (e) => {
       $("email").value = s.email || "";
       $("dlTemplate").value = s.template || "";
       $("scihubEnable").checked = s.scihub_enable !== false;
+      $("scihubInsecure").checked = !!s.scihub_insecure_tls;
       $("dlWorkers").value = String(s.download_workers || 3);
       $("scihubMirrors").value = s.scihub_mirrors || "";
       $("instEnable").checked = s.inst_enable === true;
@@ -1023,6 +1024,7 @@ window.addEventListener("unhandledrejection", (e) => {
         settings: { download_dir: $("dlDir").value.trim(), email: $("email").value.trim(),
                     template: $("dlTemplate").value.trim(),
                     scihub_enable: $("scihubEnable").checked,
+                    scihub_insecure_tls: $("scihubInsecure").checked,
                     download_workers: Number($("dlWorkers").value),
                     scihub_mirrors: $("scihubMirrors").value.trim(),
                     inst_enable: $("instEnable").checked,

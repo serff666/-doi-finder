@@ -73,6 +73,7 @@ window.DF_EN = {
   "：按「刊名 / 年份 / Volume 卷, Issue 期」分文件夹保存": ": saved into Journal / Year / Volume V, Issue I folders",
   "每篇论文的尝试顺序": "Order tried for each paper",
   "都失败时": "If everything fails",
+  "跳过 Sci-Hub 镜像的证书校验（仅当镜像证书过期、连不上时才勾选；默认关闭更安全）": "Skip certificate checks for Sci-Hub mirrors (only if a mirror has an expired certificate; off is safer)",
   "类型（决定默认勾选）": "Type (sets the default selection)",
   "全部": "All",
   "仅研究论文": "Research articles only",
