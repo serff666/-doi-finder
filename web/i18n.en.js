@@ -65,6 +65,7 @@ window.DF_EN = {
   "参考文献格式": "Reference style",
   "反查": "Look up",
   "取消全选": "Clear selection",
+  "跳过 Sci-Hub 镜像的证书校验（仅当镜像证书过期、连不上时才勾选；默认关闭更安全）": "Skip certificate checks for Sci-Hub mirrors (only if a mirror has an expired certificate; off is safer)",
   "类型（决定默认勾选）": "Type (sets the default selection)",
   "全部": "All",
   "仅研究论文": "Research articles only",

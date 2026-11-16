@@ -133,3 +133,15 @@ def test_harvest_unknown_journal_reports_clear_error():
         assert errs and "查不到这本期刊" in errs[0]
     finally:
         journals._get = orig
+
+
+def test_scihub_verifies_tls_by_default():
+    import ssl
+    import scihub
+    import server
+    assert server.scihub_conf({})["insecure"] is False
+    strict = scihub._Session(insecure=False)
+    loose = scihub._Session(insecure=True)
+    ctx = lambda s: next(h for h in s.opener.handlers if hasattr(h, "_context"))._context  # noqa: E731
+    assert ctx(strict).verify_mode == ssl.CERT_REQUIRED and ctx(strict).check_hostname
+    assert ctx(loose).verify_mode == ssl.CERT_NONE

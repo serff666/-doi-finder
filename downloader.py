@@ -271,7 +271,8 @@ def _try_scihub(doi: str, conf: dict, should_stop=None) -> tuple[bytes | None, s
     mirrors = conf.get("mirrors") or scihub.DEFAULT_MIRRORS
     scinet = conf.get("scinet") or scihub.DEFAULT_SCINET
     timeout = float(conf.get("timeout") or 30)
-    return scihub.fetch(doi, mirrors=mirrors, scinet=scinet, timeout=timeout, should_stop=should_stop)
+    return scihub.fetch(doi, mirrors=mirrors, scinet=scinet, timeout=timeout, should_stop=should_stop,
+                        insecure=bool(conf.get("insecure")))
 
 
 DEADLINE_PER_DOI = 240  # seconds; past this no further source is started for the DOI

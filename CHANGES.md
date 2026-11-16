@@ -1,5 +1,7 @@
 # Changes and known issues
 
+**Unreleased:** Sci-Hub certificate verification is now on by default (opt-out checkbox in Settings); journal tab resolves titles to ISSN.
+
 **2.1.1 (takeover):** restored the email input, fixed `/api/jobs`, archive path guard, front-matter filter in harvest, cross-platform helpers, LF line endings, tests + CI. Also: translation code fully removed, lint (ruff F/E9) clean, dead harvest JS removed, journal tab ⑨ now has a type filter (research / review / exclude corrections) that sets the default selection and shows a type column. Still unverified: real Crossref harvest, real downloads and the live UI (no network in the build sandbox).
 
 This file lists what was changed in this build and, just as importantly, what does
