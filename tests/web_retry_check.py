@@ -135,6 +135,7 @@ DRIVER = r"""
     ok("stop hidden after harvest", $("jdStop").hidden);
     $("jdDownload").click();
     await until(() => /正在下载/.test($("jdRunTitle").textContent), "dl started");
+    ok("open-folder button available while it runs", !$("jdOpenDir").hidden);
     ok("panel visible with pause and stop", !$("jdPanel").hidden && !$("jdPause").hidden && !$("jdStop").hidden);
     await until(() => !$("jdPause").disabled && /已处理 1/.test($("jdProg").textContent), "first progress tick");
     ok("progress text shows counts", /已处理 1 \/ 3/.test($("jdProg").textContent) && /成功 1/.test($("jdProg").textContent), $("jdProg").textContent);
@@ -200,6 +201,10 @@ DRIVER = r"""
     ok("default restored", $("ppSci").checked === true);
     $("toDownload").click();
     await until(() => !!$("lkPanel") && /下载完成/.test($("lkRunTitle").textContent), "in-page download");
+    ok("open-folder button right beside the finished lookup download", !$("lkOpenDir").hidden);
+    $("lkOpenDir").click();
+    await until(() => window.__log.some((c) => c[0] === "/api/open-folder"), "open folder");
+    ok("it opens that page's own folder", window.__log.filter((c) => c[0] === "/api/open-folder").slice(-1)[0][1].path === "/tmp/lk");
     ok("lookup download stays on the lookup page", document.getElementById("tab-lookup") && !document.getElementById("tab-lookup").hidden && document.getElementById("tab-download").hidden);
     const lkBody = window.__log.filter((c) => c[0] === "/api/download").slice(-1)[0][1];
     ok("lookup download uses its own folder and channels", lkBody.dir === "/tmp/lk" && lkBody.scihub === false && lkBody.inst === true && lkBody.workers === 5, JSON.stringify(lkBody));

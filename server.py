@@ -559,6 +559,20 @@ def run_lab_job(jid: str, url: str, opts: dict) -> None:
         job["state"] = "error"
 
 
+_JOB_DIRS: set[str] = set()      # folders a download job of this session wrote to (so "open folder" works for them)
+
+
+def _norm_dir(x: str) -> str:
+    return os.path.normcase(os.path.realpath(os.path.abspath(os.path.expanduser(x))))
+
+
+def _register_job_dir(dest: str) -> None:
+    try:
+        _JOB_DIRS.add(_norm_dir(dest))
+    except (ValueError, OSError):
+        pass
+
+
 def run_lab_dl_job(jid: str, items: list, opts: dict) -> None:
     job = JOBS[jid]
     try:
@@ -566,6 +580,7 @@ def run_lab_dl_job(jid: str, items: list, opts: dict) -> None:
         dest = (opts.get("dir") or load_settings().get("download_dir") or "").strip()
         if not dest:
             dest = os.path.join(os.path.expanduser("~"), "Downloads", "DOI Finder", "lab")
+        _register_job_dir(dest)
         done = {"n": 0}
 
         def prog(i, total, rec):
@@ -607,6 +622,7 @@ def run_rg_job(jid: str, conf: dict, url: str) -> None:
 def run_download_job(job_id: str, dois: list[str], opts: dict):
     job = JOBS[job_id]
     dest = opts.get("dir") or load_settings()["download_dir"]
+    _register_job_dir(dest)
     try:
         os.makedirs(dest, exist_ok=True)
     except Exception as e:  # noqa: BLE001
@@ -966,6 +982,16 @@ class Handler(BaseHTTPRequestHandler):
             base = norm(load_settings()["download_dir"])
             p = norm(path)
             return os.path.commonpath([p, base]) == base
+        except (ValueError, OSError):
+            return False
+
+    def _openable(self, path: str) -> bool:
+        """The saved download folder, or a folder a download job of this session used (per-page folders)."""
+        if self._path_allowed(path):
+            return True
+        try:
+            p = _norm_dir(path)
+            return any(os.path.commonpath([p, b]) == b for b in _JOB_DIRS)
         except (ValueError, OSError):
             return False
 
@@ -1549,7 +1575,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if p == "/api/open-folder":
             path = body.get("path") or load_settings()["download_dir"]
-            if not self._path_allowed(path):
+            if not self._openable(path):
                 return self._json({"error": "只能打开下载目录内的路径"}, 403)
             try:
                 os.makedirs(path, exist_ok=True)

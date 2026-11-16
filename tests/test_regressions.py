@@ -378,3 +378,18 @@ def test_deadline_ignores_paused_time_in_download_one():
     finally:
         downloader.DEADLINE_PER_DOI = old
         _restore(undo)
+
+
+def test_open_folder_allows_job_dirs_only():
+    import server
+    base = tempfile.mkdtemp()
+    other = tempfile.mkdtemp()
+    server.save_settings({"download_dir": base})
+    h = server.Handler.__new__(server.Handler)
+    server._JOB_DIRS.clear()
+    assert not h._openable(other)                       # arbitrary folder: refused
+    server._register_job_dir(other)
+    assert h._openable(other) and h._openable(os.path.join(other, "2024", "v1"))
+    assert not h._openable(os.path.dirname(other))      # the parent is still refused
+    assert h._openable(base)
+    server._JOB_DIRS.clear()
