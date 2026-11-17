@@ -13,6 +13,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import web_retry_check as base  # noqa: E402  (its FAKE backend and fixtures are reused)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from chrome_path import find_chrome  # noqa: E402
 
 PRE = '<script>try { localStorage.setItem("df_lang", "en"); } catch (e) {}</script>'
 
@@ -175,7 +177,7 @@ class H(BaseHTTPRequestHandler):
 
 
 def run() -> int:
-    chrome = shutil.which("google-chrome") or shutil.which("chromium") or shutil.which("chromium-browser")
+    chrome = find_chrome()
     if not chrome:
         print("SKIP: no Chrome"); return 0
     srv = ThreadingHTTPServer(("127.0.0.1", 0), H)

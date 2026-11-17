@@ -5,6 +5,8 @@ re-displays the saved rows.  Skipped when Chrome is not installed.  Run:  python
 """
 import html as _h
 import json, os, re, shutil, subprocess, sys, tempfile, time, urllib.request
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from chrome_path import find_chrome  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PIN_ZH = "df_lang"
@@ -20,7 +22,7 @@ def get(base, path):
 
 
 def run() -> int:
-    chrome = shutil.which("google-chrome") or shutil.which("chromium") or shutil.which("chromium-browser")
+    chrome = find_chrome()
     if not chrome:
         print("SKIP: no Chrome"); return 0
     data = tempfile.mkdtemp(); prof = tempfile.mkdtemp()

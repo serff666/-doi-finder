@@ -10,7 +10,9 @@ language set to English, and lists what does not come out in English.
 
 Skipped (exit 0) when Chrome is not installed.
 """
-import json, os, re, shutil, subprocess, sys, tempfile
+import json, os, re, subprocess, sys, tempfile
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from chrome_path import find_chrome  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.path.join(ROOT, "web")
@@ -160,7 +162,7 @@ window.addEventListener("load", () => setTimeout(() => {     // after i18n.js ha
 
 
 def run_chrome(probes):
-    chrome = shutil.which("google-chrome") or shutil.which("chromium") or shutil.which("chromium-browser")
+    chrome = find_chrome()
     if not chrome:
         return None
     read = lambda n: open(os.path.join(WEB, n), encoding="utf-8").read().replace("</script", "<\\/script")

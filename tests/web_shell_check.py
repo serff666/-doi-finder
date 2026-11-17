@@ -15,6 +15,8 @@ import sys
 import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from chrome_path import find_chrome  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.path.join(ROOT, "web")
@@ -199,7 +201,7 @@ class H(BaseHTTPRequestHandler):
 
 
 def run() -> int:
-    chrome = shutil.which("google-chrome") or shutil.which("chromium") or shutil.which("chromium-browser")
+    chrome = find_chrome()
     if not chrome:
         print("SKIP: no Chrome"); return 0
     srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
