@@ -8,13 +8,13 @@ switched to Chinese and back to check that nothing is stuck in the wrong languag
 
 Skipped when Chrome is not installed.  Run:  python tests/web_i18n_check.py
 """
-import json, os, re, shutil, subprocess, sys, tempfile, threading, html as _h
+import json, os, re, shutil, sys, tempfile, threading, html as _h
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import web_retry_check as base  # noqa: E402  (its FAKE backend and fixtures are reused)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from chrome_path import find_chrome  # noqa: E402
+from chrome_path import find_chrome, run_chrome  # noqa: E402
 
 PRE = '<script>try { localStorage.setItem("df_lang", "en"); } catch (e) {}</script>'
 
@@ -184,9 +184,8 @@ def run() -> int:
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     prof = tempfile.mkdtemp()
     try:
-        r = subprocess.run([chrome, "--headless=new", "--no-sandbox", "--disable-gpu", "--lang=en-US",
-                            "--virtual-time-budget=90000", "--dump-dom", f"http://127.0.0.1:{srv.server_port}/"],
-                           capture_output=True, encoding="utf-8", errors="replace", timeout=150)
+        r = run_chrome([chrome, "--headless=new", "--no-sandbox", "--disable-gpu", "--lang=en-US",
+                            "--virtual-time-budget=90000", "--dump-dom", f"http://127.0.0.1:{srv.server_port}/"], timeout=150)
     finally:
         srv.shutdown(); shutil.rmtree(prof, ignore_errors=True)
     m = re.search(r'<pre id="result">(.*?)</pre>', r.stdout, re.S)

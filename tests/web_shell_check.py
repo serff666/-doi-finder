@@ -10,13 +10,12 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import sys
 import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from chrome_path import find_chrome  # noqa: E402
+from chrome_path import find_chrome, run_chrome  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.path.join(ROOT, "web")
@@ -208,9 +207,8 @@ def run() -> int:
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     prof = tempfile.mkdtemp()
     try:
-        r = subprocess.run([chrome, "--headless=new", "--no-sandbox", "--disable-gpu", "--lang=en-US",
-                            "--virtual-time-budget=60000", "--dump-dom", f"http://127.0.0.1:{srv.server_port}/"],
-                           capture_output=True, encoding="utf-8", errors="replace", timeout=150)
+        r = run_chrome([chrome, "--headless=new", "--no-sandbox", "--disable-gpu", "--lang=en-US",
+                            "--virtual-time-budget=60000", "--dump-dom", f"http://127.0.0.1:{srv.server_port}/"], timeout=150)
     finally:
         srv.shutdown(); shutil.rmtree(prof, ignore_errors=True)
     m = re.search(r'<pre id="result">(.*?)</pre>', r.stdout, re.S)

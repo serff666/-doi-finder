@@ -4,7 +4,9 @@ Windows runners (and most Windows machines) do not put chrome.exe on PATH, so wi
 lookup every browser check silently skipped there."""
 import os
 import shutil
+import subprocess
 import sys
+import types
 
 # These checks print Chinese (page text, failure details). On Windows a piped stdout uses the ANSI code
 # page (cp1252 on CI), which cannot encode it; write UTF-8 everywhere.
@@ -33,3 +35,38 @@ def find_chrome() -> str:
                 return p
     mac = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
     return mac if os.path.isfile(mac) else ""
+
+
+def _decode(b) -> str:
+    return (b or b"").decode("utf-8", "replace")
+
+
+def _run(cmd, timeout):
+    """(stdout, stderr, finished) — never raises on timeout, never hangs on pipes left open by children."""
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        out, err = p.communicate(timeout=timeout)
+        return _decode(out), _decode(err), True
+    except subprocess.TimeoutExpired:
+        p.kill()
+        try:
+            out, err = p.communicate(timeout=15)
+        except subprocess.TimeoutExpired:   # a child process still holds the pipes
+            out, err = b"", b"(no output: pipes still held by a Chrome child process)"
+        return _decode(out), _decode(err), False
+
+
+def run_chrome(cmd: list, timeout: float):
+    """Run headless Chrome for --dump-dom. On a timeout, fail with a diagnosis instead of a bare
+    TimeoutExpired: Chrome's own log, the partial output, and whether a trivial page works at all."""
+    cmd = list(cmd[:1]) + ["--enable-logging=stderr", "--v=0"] + list(cmd[1:])
+    out, err, done = _run(cmd, timeout)
+    if done:
+        return types.SimpleNamespace(stdout=out, stderr=err)
+    probe_out, probe_err, probe_done = _run([cmd[0], "--headless=new", "--no-sandbox", "--disable-gpu",
+                                             "--dump-dom", "data:text/html,<p id=probe>ok</p>"], 45)
+    probe = ("a trivial page works (" + ("dump ok" if "probe" in probe_out else "no DOM: " + probe_err[-300:]) + ")"
+             if probe_done else "even a trivial page times out: Chrome headless itself is stuck here")
+    raise SystemExit(f"Chrome did not finish within {timeout:.0f} s; {probe}.\n"
+                     f"--- partial stdout (first 800 chars) ---\n{out[:800]}\n"
+                     f"--- Chrome log (last 4000 chars) ---\n{err[-4000:]}")

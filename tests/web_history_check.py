@@ -6,7 +6,7 @@ re-displays the saved rows.  Skipped when Chrome is not installed.  Run:  python
 import html as _h
 import json, os, re, shutil, subprocess, sys, tempfile, time, urllib.request
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from chrome_path import find_chrome  # noqa: E402
+from chrome_path import find_chrome, run_chrome  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PIN_ZH = "df_lang"
@@ -46,8 +46,8 @@ def run() -> int:
         ok = a.get("id") and len(get(base, "/api/history?kind=lab")["items"]) == 1
         print(("ok   " if ok else "FAIL ") + "API saves and lists a record"); bad += 0 if ok else 1
 
-        r = subprocess.run([chrome, "--headless=new", "--no-sandbox", "--disable-gpu", "--lang=zh-CN",
-                            "--virtual-time-budget=20000", "--dump-dom", base + "/#lab"], capture_output=True, encoding="utf-8", errors="replace", timeout=90)
+        r = run_chrome([chrome, "--headless=new", "--no-sandbox", "--disable-gpu", "--lang=zh-CN",
+                            "--virtual-time-budget=20000", "--dump-dom", base + "/#lab"], timeout=90)
         dom = r.stdout
         res = {
             "hist": {k: len(re.findall(r'<div class="hist-row', (re.search(r'id="hist-%s".*?</details>' % k, dom, re.S) or [""])[0]))
