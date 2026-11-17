@@ -171,7 +171,7 @@ def run_chrome(probes):
         open(page, "w", encoding="utf-8").write(PAGE % (read("i18n.en.js"), read("i18n.js"), json.dumps(probes, ensure_ascii=False)))
         r = subprocess.run([chrome, "--headless=new", "--no-sandbox", "--disable-gpu", "--user-data-dir=" + os.path.join(td, "prof"),
                             "--virtual-time-budget=10000", "--dump-dom", "file://" + page],
-                           capture_output=True, text=True, timeout=120)
+                           capture_output=True, encoding="utf-8", errors="replace", timeout=120)
     m = re.search(r'<pre id="result">(.*?)</pre>', r.stdout, re.S)
     if not m:
         raise SystemExit("could not read the result from Chrome:\n" + r.stdout[:600] + r.stderr[-300:])

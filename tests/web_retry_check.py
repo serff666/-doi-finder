@@ -319,7 +319,7 @@ def run() -> int:
     try:
         r = subprocess.run([chrome, "--headless=new", "--no-sandbox", "--disable-gpu", "--lang=zh-CN", f"--user-data-dir={prof}",
                             "--virtual-time-budget=60000", "--dump-dom", f"http://127.0.0.1:{srv.server_port}/"],
-                           capture_output=True, text=True, timeout=120)
+                           capture_output=True, encoding="utf-8", errors="replace", timeout=120)
     finally:
         srv.shutdown(); shutil.rmtree(prof, ignore_errors=True)
     import re, html as _h

@@ -47,7 +47,7 @@ def run() -> int:
         print(("ok   " if ok else "FAIL ") + "API saves and lists a record"); bad += 0 if ok else 1
 
         r = subprocess.run([chrome, "--headless=new", "--no-sandbox", "--disable-gpu", "--lang=zh-CN", f"--user-data-dir={prof}",
-                            "--virtual-time-budget=20000", "--dump-dom", base + "/#lab"], capture_output=True, text=True, timeout=90)
+                            "--virtual-time-budget=20000", "--dump-dom", base + "/#lab"], capture_output=True, encoding="utf-8", errors="replace", timeout=90)
         dom = r.stdout
         res = {
             "hist": {k: len(re.findall(r'<div class="hist-row', (re.search(r'id="hist-%s".*?</details>' % k, dom, re.S) or [""])[0]))

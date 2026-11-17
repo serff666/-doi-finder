@@ -4,6 +4,15 @@ Windows runners (and most Windows machines) do not put chrome.exe on PATH, so wi
 lookup every browser check silently skipped there."""
 import os
 import shutil
+import sys
+
+# These checks print Chinese (page text, failure details). On Windows a piped stdout uses the ANSI code
+# page (cp1252 on CI), which cannot encode it; write UTF-8 everywhere.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:  # noqa: BLE001 - not a text stream (e.g. replaced by a test runner)
+        pass
 
 
 def find_chrome() -> str:
