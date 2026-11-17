@@ -15,10 +15,14 @@ if [ ! -d .venv ]; then
 fi
 [ -x .venv/bin/python ] && PY=.venv/bin/python
 if ! "$PY" -c 'import openpyxl, pypdf' 2>/dev/null; then
-  "$PY" -m pip install -q -r requirements.txt 2>/dev/null \
+  "$PY" -m pip install -q openpyxl pypdf 2>/dev/null \
     || echo "[setup] could not install optional packages (Excel export / PDF guessing disabled)"
 fi
+# the native window: pywebview plus a GUI backend (GTK via python3-gi, or Qt). Without them the UI
+# opens in Chrome / Chromium or the default browser instead.
+if ! "$PY" -c 'import webview' 2>/dev/null; then
+  "$PY" -m pip install -q pywebview 2>/dev/null || echo "[setup] pywebview not installed: the UI opens in the browser"
+fi
 
-export DOIFINDER_PORT="${DOIFINDER_PORT:-8765}"
-echo "DOI Finder → http://127.0.0.1:${DOIFINDER_PORT}/   (Ctrl+C to quit)"
-exec "$PY" server.py
+echo "DOI Finder starting (Ctrl+C to quit)…"
+exec "$PY" desktop.py --open

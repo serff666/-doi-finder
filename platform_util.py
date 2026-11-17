@@ -156,12 +156,27 @@ def _tk_pick(kind: str, title: str, initial: str = "", patterns: tuple = (), mul
             root.destroy()
 
 
+# The desktop shell (desktop.py) owns a native window and opens the dialogs on it instead: same
+# signature as _tk_pick. None = the tkinter path above.
+_PICKER = None
+
+
+def set_picker(fn) -> None:
+    """Route every file / folder dialog through fn(kind, title, initial, patterns, multi) -> list[str]."""
+    global _PICKER
+    _PICKER = fn
+
+
+def _pick(kind: str, title: str, initial: str = "", patterns: tuple = (), multi: bool = False) -> list[str]:
+    return (_PICKER or _tk_pick)(kind, title, initial, patterns, multi)
+
+
 def pick_folder(title: str, initial: str = "") -> str:
     """Ask the user for a folder. "" when cancelled; raises when no dialog can be shown."""
-    got = _tk_pick("folder", title, initial)
+    got = _pick("folder", title, initial)
     return got[0] if got else ""
 
 
 def pick_files(title: str, patterns: tuple = (), multi: bool = False) -> list[str]:
     """Ask the user for file(s). patterns: (("PDF", "*.pdf"), ...). [] when cancelled."""
-    return _tk_pick("file", title, patterns=patterns, multi=multi)
+    return _pick("file", title, patterns=patterns, multi=multi)

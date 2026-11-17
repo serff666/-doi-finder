@@ -21,6 +21,8 @@ oa_cache.json
 # 界面运行时数据
 browser-profile*/
 ui-profile/
+webview/
+window.json
 .cache/
 
 validation_report.md

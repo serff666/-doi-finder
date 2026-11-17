@@ -34,13 +34,14 @@ It does three things, and for every result it states the evidence or the reason 
 
 ## 2. Install and run
 
-**Windows installer** (`DOI-Finder-Setup-<version>.exe` on the release page): a single-file installer, installs to `%LOCALAPPDATA%\Programs\DOI Finder` by default, needs no administrator rights, uninstalls from the Control Panel. It is not code-signed, so SmartScreen may warn: choose "More info → Run anyway". On start it opens its own app window with the local Chrome or Edge; if neither is installed it uses the default browser.
+**Windows installer** (`DOI-Finder-Setup-<version>.exe` on the release page): a single-file installer, installs to `%LOCALAPPDATA%\Programs\DOI Finder` by default, needs no administrator rights, uninstalls from the Control Panel. It is not code-signed, so SmartScreen may warn: choose "More info → Run anyway". It is a desktop app: its own window (the system's WebView2), its own taskbar entry, native file dialogs, no address bar. Starting it a second time brings the open window forward.
 
 **From source** (Python 3.11 or newer):
 
 ```bat
 :: Windows
-python server.py --open            :: --open opens the UI after start; run_server.cmd does the same
+pip install -r requirements.txt
+python desktop.py                  :: the desktop window; run_server.cmd does the same
 ```
 
 ```bash
@@ -48,10 +49,11 @@ python server.py --open            :: --open opens the UI after start; run_serve
 ./run.sh                           # the first run creates .venv in the project and installs dependencies
 ```
 
-- The server listens on `127.0.0.1` only, default port 8765; if it is taken the next ports are tried (up to 40). Set the environment variable `DOIFINDER_PORT` to choose a port and `DOIFINDER_NO_BROWSER=1` to stop the UI opening. There is no `--port` option.
-- The "Quit" button at the top right stops the server.
-- Optional packages (`requirements.txt`): `openpyxl` (Excel export) and `pypdf` (guessing title and year from a PDF's first page when archiving). Without them those features are unavailable; the rest is unaffected.
-- The file / folder pickers use Python's built-in tkinter, with no fallback. If tkinter is unavailable the "Choose…" button reports an error; type the path into the field instead.
+- **The desktop window** (`desktop.py`) uses [pywebview](https://pywebview.flowrl.com/): WebView2 on Windows (built into Windows 10/11), WebKit on macOS, GTK or Qt on Linux (see [README.linux.md](README.linux.md)). Without pywebview, or without a GUI backend for it, the same interface opens in a Chrome / Edge app window or the default browser instead (`python server.py --open` does that directly).
+- Closing the window stops the app; if a job is still running it asks first (downloaded files and history are kept either way). Size and position are remembered.
+- The server listens on `127.0.0.1` only, default port 8765; if it is taken the next ports are tried (up to 40). Set the environment variable `DOIFINDER_PORT` to choose a port and `DOIFINDER_NO_BROWSER=1` to run only the server, with no window. There is no `--port` option.
+- Optional packages (`requirements.txt`): `openpyxl` (Excel export), `pypdf` (guessing title and year from a PDF's first page when archiving) and `pywebview` (the desktop window). Without them those features are unavailable; the rest is unaffected.
+- File / folder pickers and "Save as" are the system's own dialogs in the desktop window. In the browser fallback the pickers use Python's tkinter, and exports go to the browser's downloads; if tkinter is unavailable, type the path into the field.
 - The institutional channel and some download steps need Chrome or Edge installed.
 
 **What has been verified**: automated tests (unit tests, an end-to-end journal flow, browser-side UI checks) run on GitHub Actions on Windows and Ubuntu, Python 3.11 and 3.13. Real publisher traffic, institutional login and the availability of third-party sources are not covered by automation and can only be verified by use. Linux has been tested at the source level only; macOS has not been tested.
@@ -62,14 +64,22 @@ Set two things first; the rest can wait:
 
 | Where | What | Notes |
 |---|---|---|
-| "Workspace" at the top | one root folder, e.g. `D:\Literature` | every page files under it. Default: `~/Downloads/DOI Finder` (on Windows `C:\Users\<you>\Downloads\DOI Finder`) |
-| "Contact email" in Settings | your own address | sent with requests to Crossref, OpenAlex, Unpaywall and similar services, which rate-limit such requests less. Optional, but HTTP 429 becomes more likely without it |
+| "Workspace" in the top bar | one root folder, e.g. `D:\Literature` | every page files under it. Default: `~/Downloads/DOI Finder` (on Windows `C:\Users\<you>\Downloads\DOI Finder`) |
+| "Contact email" on the Settings page | your own address | sent with requests to Crossref, OpenAlex, Unpaywall and similar services, which rate-limit such requests less. Optional, but HTTP 429 becomes more likely without it |
 
 A typical flow: paste titles on **① Title → DOI**, click start, check the grades; click "→ download these PDFs" and follow the panel on the same page; open the download folder when done.
 
-## 4. The tabs
+## 4. The interface
 
-| Tab | Input | Output |
+The window has a **sidebar** with the pages grouped by job (find papers · get full text · follow · organize) and **Settings** at the bottom, a **top bar** with the page's name and the workspace folder, and a **status bar** with the connection state, the running job and its progress (the window title shows the percentage too, so it is visible on the taskbar).
+
+- **Command palette** (`Ctrl+K`, or the search box in the top bar): type part of a page or action name — "pdf", "settings", "dark" — and press Enter.
+- **Shortcuts**: `Ctrl+1` … `Ctrl+0` open pages ① … ⑩; `Ctrl+,` opens Settings; `Ctrl+Enter` starts the current page's main action; `Ctrl+S` saves the settings. The sidebar collapses to icons (button at the bottom).
+- **Light / dark**: follows the system by default; choose on the Settings page or with the moon button.
+- **Drag and drop**: drop a `.txt` / `.md` / `.csv` / `.bib` / `.ris` file onto ①, ② or ⑩ and its text is appended to the input box. In the desktop window, PDFs dropped anywhere are filed straight away by the ⑦ Archive rules.
+- **Notifications**: when a job finishes while the window is in the background, a system notification is shown (switch on the Settings page).
+
+| Page | Input | Output |
 |---|---|---|
 | ① Title → DOI | titles, whole references, BibTeX, RIS | a DOI per entry with grade and evidence; exportable |
 | ② DOI → PDF | a list of DOIs | local PDFs with each entry's source or failure reason |
@@ -82,7 +92,7 @@ A typical flow: paste titles on **① Title → DOI**, click start, check the gr
 | ⑨ Journal library | journal name or ISSN, optional years | the journal's article list (Crossref), downloaded into `Journal/Year/Volume V, Issue I/` |
 | ⑩ Preprints | a title or the journal DOI | candidate ChemRxiv preprints; check, then download |
 
-Each tab downloads in place with its own progress panel (progress, pause, stop, retry the unfinished, open folder) and its own workspace, collection folder, structure, Sci-Hub switch, institutional-browser switch and worker count; they do not interfere.
+Each page downloads in place with its own progress panel (progress, pause, stop, retry the unfinished, open folder) and its own workspace, collection folder, structure, Sci-Hub switch, institutional-browser switch and worker count; they do not interfere.
 
 ## 5. Title → DOI: how "right" is judged
 
@@ -208,7 +218,7 @@ e.g. D:\Literature\Zhang Xinglong\2025\Zhang_2025_Title.pdf
 
 ## 8. Settings and keys
 
-Settings are stored in `%LOCALAPPDATA%\DOIFinder\settings.json` (Linux: `~/.local/share/DOIFinder`). `settings.example.json` in the repository shows the fields and contains no keys.
+Everything below is on the **Settings** page (sidebar, bottom; `Ctrl+,`) and applies to every page; the workspace is in the top bar and saves itself. Settings are stored in `%LOCALAPPDATA%\DOIFinder\settings.json` (Linux: `~/.local/share/DOIFinder`). `settings.example.json` in the repository shows the fields and contains no keys.
 
 | Setting | Default | Notes |
 |---|---|---|
@@ -255,15 +265,16 @@ Tab ⑨ can show a journal's average / median review time, JCR quartile, CAS zon
 
 **Stuck on one paper**: a paper has a 240-second budget, and a single institutional-browser wait defaults to 75 seconds (`inst_timeout`, 5–300). Pause, deal with the others, then resume.
 
-**The dialog does not appear or is not in front**: see §2; the pickers use tkinter only. If it reports an error, type the path.
+**The dialog does not appear or is not in front**: in the desktop window the dialogs belong to the window itself. In the browser fallback they use tkinter (see §2); if it reports an error, type the path.
 
 **Logs**: `%LOCALAPPDATA%\DOIFinder\doifinder.log` (rotated beyond 1 MB). Each finished batch logs every paper that was not fetched, with the reason, on lines starting with `miss`.
 
-**A button does nothing**: the status bar at the top right shows the script error and line number; Ctrl+F5 usually fixes it.
+**A button does nothing**: the status bar at the bottom shows the script error and line number; "Reload UI" there (or Ctrl+F5) usually fixes it.
 
 ## 12. Layout
 
 ```
+desktop.py        the desktop app: native window, dialogs, close guard, single instance
 server.py         local HTTP server, job scheduling, settings
 doi_engine.py     title → DOI: Crossref / OpenAlex queries and scoring
 validation.py     reference field checks

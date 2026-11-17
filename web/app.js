@@ -17,7 +17,7 @@ window.addEventListener("unhandledrejection", (e) => {
     b.addEventListener("click", () => {
       b.disabled = true;
       b.textContent = "刷新中…";
-      const url = location.pathname + "?t=" + Date.now();
+      const url = location.pathname + "?t=" + Date.now() + location.hash;
       location.replace(url);
     });
   };
@@ -85,7 +85,24 @@ window.addEventListener("unhandledrejection", (e) => {
     if (!res.ok) throw new Error(friendly(data.error || `HTTP ${res.status}`));
     return data;
   }
-  function saveBlob(blob, name) {
+  // In the desktop app (desktop.py) files are written through the native "Save as" dialog;
+  // in a browser they go through the browser's download.
+  const desk = () => (window.pywebview && window.pywebview.api) || null;
+  async function saveBlob(blob, name) {
+    const d = desk();
+    if (d && d.save_file) {
+      const b64 = await new Promise((ok, bad) => {
+        const r = new FileReader();
+        r.onload = () => ok(String(r.result).split(",")[1] || "");
+        r.onerror = () => bad(r.error);
+        r.readAsDataURL(blob);
+      });
+      const res = (await d.save_file(name, b64)) || {};
+      if (res.error) return toast(tr("保存失败：") + res.error);
+      if (!res.path) return toast(tr("已取消保存"));
+      toast(tr("已保存：") + res.path);
+      return;
+    }
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = name;
@@ -212,12 +229,44 @@ window.addEventListener("unhandledrejection", (e) => {
   };
   const snip = (t, n) => { const x = String(t || "").replace(/\s+/g, " ").trim(); return x.length > n ? x.slice(0, n) + "…" : x; };
 
-  function showTab(name) {
-    state.tab = name;
-    document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
-    document.querySelectorAll(".tabpanel").forEach((p) => { p.hidden = p.id !== "tab-" + name; });
+  // page title + one-line purpose shown in the top bar (translated through tr())
+  const PAGE_META = {
+    lookup: ["标题 → DOI", "把标题或整条参考文献解析成 DOI，并写明匹配依据"],
+    download: ["DOI → PDF", "按出版社和年份选择通道批量下载 PDF，每一篇都写明来源或失败原因"],
+    search: ["主题搜索", "按关键词、作者、ORCID 和年份从 OpenAlex 找文献"],
+    chem: ["ChemASAP", "化学期刊刚上线的 ASAP 文章"],
+    journal: ["期刊追新", "关注期刊，刷新时标出上次以来的新文章"],
+    rg: ["ResearchGate", "读取作者主页上的全部论文"],
+    archive: ["归档", "把已有的 PDF 按模板重命名并放进工作区"],
+    lab: ["网页文献", "从课题组的 publications 页面抓出标题、DOI 和 PDF 链接"],
+    journaldl: ["期刊文库", "整本期刊回溯，按刊名 / 年份 / 卷期归档"],
+    preprint: ["预印本", "正式版下不到时，找同一篇的 ChemRxiv 预印本"],
+    settings: ["设置", "下载通道、机构订阅、API 密钥和外观"],
+  };
+  function paintPageHead() {
+    const m = PAGE_META[state.tab] || ["DOI Finder", ""];
+    if ($("pageTitle")) $("pageTitle").textContent = tr(m[0]);
+    if ($("pageSub")) $("pageSub").textContent = tr(m[1]);
   }
-  document.querySelectorAll("#tabs button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+  function showTab(name) {
+    if (!document.getElementById("tab-" + name)) return;
+    state.tab = name;
+    document.querySelectorAll(".sidebar [data-tab]").forEach((b) => {
+      b.classList.toggle("active", b.dataset.tab === name);
+      if (b.dataset.tab === name) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
+    });
+    document.querySelectorAll(".tabpanel").forEach((p) => { p.hidden = p.id !== "tab-" + name; });
+    paintPageHead();
+    const c = document.querySelector(".content");
+    if (c) c.scrollTop = 0;
+    try { history.replaceState(null, "", "#" + name); } catch { /* file:// or sandboxed */ }
+  }
+  document.querySelectorAll(".sidebar [data-tab]").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+  document.addEventListener("click", (e) => {
+    const g = e.target.closest("[data-goto]");
+    if (g) showTab(g.dataset.goto);
+  });
+  document.addEventListener("doifinder:lang", paintPageHead);
 
   /* ================================================================ 1. titles → DOI */
   const NUM = /^\s*(?:\[\s*\d+\s*\]|\(\s*\d+\s*\)|\d+\s*[.)\]:]|#\s*\d+)\s+/;
@@ -1205,6 +1254,10 @@ window.addEventListener("unhandledrejection", (e) => {
     dlHere("lk", $("toDownload"), [state.baiduDoi]);
   });
 
+  function paintAbout() {
+    if ($("aboutShell")) $("aboutShell").textContent = tr(state.shell === "desktop" ? "桌面应用 · 原生窗口" : "浏览器界面") + (state.platform ? " · " + state.platform : "");
+  }
+  document.addEventListener("doifinder:lang", paintAbout);
   async function loadSettings() {
     try {
       const d = await api("/api/health");
@@ -1235,6 +1288,11 @@ window.addEventListener("unhandledrejection", (e) => {
       refreshInstStatus();
       document.dispatchEvent(new Event("doifinder:settings"));
       if (d.frozen) $("quit").hidden = false;
+      state.shell = d.shell || "browser";
+      document.documentElement.dataset.shell = state.shell;
+      if ($("aboutVer")) $("aboutVer").textContent = d.version || "";
+      state.platform = d.platform || "";
+      paintAbout();
     } catch { /* ignore */ }
   }
   $("saveSettings").addEventListener("click", async () => {
@@ -1316,7 +1374,7 @@ window.addEventListener("unhandledrejection", (e) => {
   $("pickDir").addEventListener("click", async () => {
     try {
       const d = await api("/api/pick-folder", { initial: $("dlDir").value.trim() });
-      if (d.path) { $("dlDir").value = d.path; toast("已选择：" + d.path); }
+      if (d.path) { $("dlDir").value = d.path; saveWorkspace(); }
     } catch (e) { toast(e.message); }
   });
   $("openDir").addEventListener("click", () => api("/api/open-folder", { path: $("dlDir").value.trim() })
@@ -2118,11 +2176,13 @@ window.addEventListener("unhandledrejection", (e) => {
       </tr>`).join("")}</tbody></table></div>`;
   }
 
-  $("arPick").addEventListener("click", async () => {
+  // paths: PDFs dropped on the desktop window (their real paths); none = ask with the file picker
+  async function runArchive(paths) {
     $("arPick").disabled = true;
-    feedback("arFeedback", "在弹出的窗口里选择文件（可多选）…");
+    feedback("arFeedback", paths && paths.length ? tr("正在归档拖进来的文件…") : "在弹出的窗口里选择文件（可多选）…");
     try {
       const d = await api("/api/archive", {
+        paths: paths || [],
         title: $("arTitle").value.trim(), first_author: $("arAuthor").value.trim(),
         year: $("arYear").value.trim(), journal: $("arJournal").value.trim(),
         file_template: $("arFileTpl").value.trim(),
@@ -2142,7 +2202,8 @@ window.addEventListener("unhandledrejection", (e) => {
     } catch (e) {
       feedback("arFeedback", "归档失败：" + e.message, true);
     } finally { $("arPick").disabled = false; }
-  });
+  }
+  $("arPick").addEventListener("click", () => runArchive());
 
 
   /* ---- per-page history adapters ---- */
@@ -2222,7 +2283,7 @@ window.addEventListener("unhandledrejection", (e) => {
   })();
 
   const hash = (location.hash || "").replace("#", "");
-  if (["lookup", "download", "search", "chem", "rg", "archive"].includes(hash)) {
+  if (PAGE_META[hash]) {
     showTab(hash);
     if (hash === "chem") loadChem();
   }
@@ -2790,5 +2851,268 @@ window.addEventListener("unhandledrejection", (e) => {
   }
 
   
+  /* ================================================================ app shell
+     Theme, collapsible sidebar, command palette, keyboard shortcuts, a job monitor in the status bar
+     (with a notification when a job finishes in the background) and drag-and-drop import. */
+  const store = {
+    get: (k, d) => { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
+    set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* private window */ } },
+  };
+
+  // ---- theme: system / light / dark
+  const darkMq = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+  function applyTheme(pick) {
+    pick = ["light", "dark"].includes(pick) ? pick : "system";
+    store.set("df_theme", pick);
+    const eff = pick === "system" ? (darkMq && darkMq.matches ? "dark" : "light") : pick;
+    document.documentElement.dataset.theme = eff;
+    document.querySelectorAll("[data-theme-pick]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.themePick === pick)));
+  }
+  applyTheme(store.get("df_theme", "system"));
+  if (darkMq && darkMq.addEventListener) darkMq.addEventListener("change", () => applyTheme(store.get("df_theme", "system")));
+  document.querySelectorAll("[data-theme-pick]").forEach((b) => b.addEventListener("click", () => applyTheme(b.dataset.themePick)));
+  const toggleTheme = () => applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+  $("themeToggle").addEventListener("click", toggleTheme);
+
+  // ---- sidebar: full or icons only
+  const toggleNav = () => {
+    const mini = document.documentElement.classList.toggle("nav-mini");
+    store.set("df_nav", mini ? "mini" : "full");
+  };
+  $("navCollapse").addEventListener("click", toggleNav);
+  // in the icon-only sidebar the label is the tooltip
+  const navTitles = () => document.querySelectorAll(".sidebar [data-tab]").forEach((b) => {
+    const l = b.querySelector(".nav-l");
+    if (l) b.title = l.textContent.trim();
+  });
+  navTitles();
+  document.addEventListener("doifinder:lang", () => setTimeout(navTitles, 0));
+
+  // ---- workspace in the top bar is saved as soon as it changes
+  async function saveWorkspace() {
+    const v = $("dlDir").value.trim();
+    if (!v) return;
+    try { await api("/api/settings", { save: true, settings: { download_dir: v } }); toast(tr("工作区已保存：") + v); }
+    catch (e) { toast(tr("保存失败：") + e.message); }
+  }
+  $("dlDir").addEventListener("change", saveWorkspace);
+  $("dlDir").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("dlDir").blur(); } });
+
+  // ---- primary action of each page (Ctrl+Enter)
+  const PRIMARY = { lookup: "start", download: "startDownload", search: "runSearch", chem: "chemLoad", journal: "jFind",
+                    rg: "rgFetch", archive: "arPick", lab: "labFetch", journaldl: "jdRun", preprint: "ppFind", settings: "saveSettings" };
+  function runPrimary() {
+    const b = $(PRIMARY[state.tab]);
+    if (b && !b.disabled && !b.hidden) b.click();
+  }
+
+  // ---- command palette
+  const navButtons = () => [...document.querySelectorAll(".sidebar [data-tab]")];
+  // Ctrl+1 … Ctrl+0 follow the pages' original numbers (① … ⑩), which the README and messages use
+  const PAGE_NUM = ["lookup", "download", "search", "chem", "journal", "rg", "archive", "lab", "journaldl", "preprint"];
+  const pageOrder = () => PAGE_NUM;
+  function paletteItems() {
+    const pages = navButtons().map((b) => ({
+      sec: tr("页面"), label: (b.querySelector(".nav-l") || b).textContent.trim(),
+      hint: tr((PAGE_META[b.dataset.tab] || ["", ""])[1]),
+      icon: (b.querySelector("svg") || {}).outerHTML || "",
+      kbd: b.dataset.tab === "settings" ? "Ctrl ," : (() => { const i = pageOrder().indexOf(b.dataset.tab); return i < 0 ? "" : "Ctrl " + ((i + 1) % 10); })(),
+      keys: b.dataset.tab, run: () => showTab(b.dataset.tab),
+    }));
+    const act = (label, keys, run, kbd) => ({ sec: tr("操作"), label: tr(label), keys, run, kbd: kbd || "", icon: "" });
+    const acts = [
+      act("开始当前页的主要操作", "run start go", runPrimary, "Ctrl Enter"),
+      act("切换深色 / 浅色", "dark light theme appearance", toggleTheme),
+      act("外观跟随系统", "system theme auto appearance", () => applyTheme("system")),
+      act("切换界面语言（中文 / English）", "language english chinese zh en", () => { const b = $("langToggle"); if (b) b.click(); }),
+      act("选择工作区文件夹", "workspace folder choose pick", () => $("pickDir").click()),
+      act("打开工作区文件夹", "workspace open folder explorer finder", () => $("openDir").click()),
+      act("保存设置", "save settings", () => $("saveSettings").click(), "Ctrl S"),
+      act("收起 / 展开侧栏", "sidebar collapse expand", toggleNav),
+      act("重新加载界面", "reload refresh", () => $("reloadApp").click()),
+      act("退出", "quit exit close", () => $("quit").click()),
+    ];
+    return pages.concat(acts);
+  }
+  // every character of the query, in order (so "dpdf" finds "DOI → PDF"); earlier/tighter hits rank first
+  function fuzzy(q, text) {
+    q = q.toLowerCase().replace(/\s+/g, ""); text = text.toLowerCase();
+    if (!q) return 1;
+    const direct = text.indexOf(q);
+    if (direct >= 0) return 1000 - direct;
+    let i = 0, gaps = 0, last = -1;
+    for (const ch of q) {
+      const j = text.indexOf(ch, last + 1);
+      if (j < 0) return 0;
+      if (last >= 0) gaps += j - last - 1;
+      last = j; i++;
+    }
+    return Math.max(1, 500 - gaps);
+  }
+  const PAL = { items: [], shown: [], sel: 0 };
+  function drawPalette() {
+    const q = $("paletteInput").value.trim();
+    PAL.shown = PAL.items.map((it) => ({ it, sc: Math.max(fuzzy(q, it.label), fuzzy(q, it.keys || "") * 0.8, fuzzy(q, it.hint || "") * 0.5) }))
+      .filter((x) => x.sc > 0).sort((a, b) => (q ? b.sc - a.sc : 0)).map((x) => x.it);
+    PAL.sel = Math.min(PAL.sel, Math.max(0, PAL.shown.length - 1));
+    let sec = "";
+    $("paletteList").innerHTML = PAL.shown.length ? PAL.shown.map((it, i) => {
+      const head = !q && it.sec !== sec ? `<div class="pal-sec">${esc((sec = it.sec))}</div>` : "";
+      return head + `<div class="pal-item ${i === PAL.sel ? "sel" : ""}" data-pal="${i}" role="option">${it.icon}
+        <span class="pal-l">${esc(it.label)}</span>${it.kbd ? `<kbd>${esc(it.kbd)}</kbd>` : ""}</div>`;
+    }).join("") : `<div class="pal-empty">${esc(tr("没有匹配的页面或操作"))}</div>`;
+    const cur = $("paletteList").querySelector(".pal-item.sel");
+    if (cur) cur.scrollIntoView({ block: "nearest" });
+  }
+  function openPalette() {
+    PAL.items = paletteItems(); PAL.sel = 0;
+    $("paletteInput").value = "";
+    $("palette").hidden = false;
+    drawPalette();
+    setTimeout(() => $("paletteInput").focus(), 0);
+  }
+  const closePalette = () => { $("palette").hidden = true; };
+  function runPalette(i) {
+    const it = PAL.shown[i];
+    closePalette();
+    if (it) setTimeout(it.run, 0);
+  }
+  $("cmdOpen").addEventListener("click", openPalette);
+  $("paletteInput").addEventListener("input", () => { PAL.sel = 0; drawPalette(); });
+  $("paletteInput").addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown") { e.preventDefault(); PAL.sel = Math.min(PAL.sel + 1, PAL.shown.length - 1); drawPalette(); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); PAL.sel = Math.max(PAL.sel - 1, 0); drawPalette(); }
+    else if (e.key === "Enter") { e.preventDefault(); runPalette(PAL.sel); }
+    else if (e.key === "Escape") { e.preventDefault(); closePalette(); }
+  });
+  $("paletteList").addEventListener("click", (e) => { const it = e.target.closest("[data-pal]"); if (it) runPalette(Number(it.dataset.pal)); });
+  $("palette").addEventListener("mousedown", (e) => { if (e.target === $("palette")) closePalette(); });
+
+  // ---- keyboard shortcuts
+  document.addEventListener("keydown", (e) => {
+    const mod = e.ctrlKey || e.metaKey;
+    if (e.key === "Escape" && !$("palette").hidden) { closePalette(); return; }
+    if (!mod || e.altKey) return;
+    const k = e.key.toLowerCase();
+    if (k === "k") { e.preventDefault(); if ($("palette").hidden) openPalette(); else closePalette(); }
+    else if (k === ",") { e.preventDefault(); showTab("settings"); }
+    else if (k === "s") { e.preventDefault(); $("saveSettings").click(); }
+    else if (e.key === "Enter") { e.preventDefault(); runPrimary(); }
+    else if (/^[0-9]$/.test(e.key) && !e.shiftKey) {
+      const t = pageOrder()[(Number(e.key) + 9) % 10];
+      if (t) { e.preventDefault(); showTab(t); }
+    }
+  });
+
+  // ---- job monitor: status bar pill, progress in the window title, a notice when a job ends
+  const KIND = { lookup: "检索 DOI", preprint: "查找预印本", download: "下载 PDF", harvest: "抓取期刊书目",
+                 lab: "抓取网页", labdl: "下载网页文献", rg: "抓取 ResearchGate" };
+  const JM = { seen: new Map(), base: "", timer: null, failures: 0 };
+  const titleBase = () => (JM.base = document.title.replace(/^\(\d+%\)\s*/, ""));
+  function notifyDone(title, body) {
+    toast(title + (body ? " · " + body : ""));
+    const want = !$("notifyDone") || $("notifyDone").checked;
+    if (!want || !("Notification" in window) || (!document.hidden && document.hasFocus())) return;
+    try { if (Notification.permission === "granted") new Notification(title, { body, icon: "/favicon.png", silent: false }); } catch { /* not supported here */ }
+  }
+  function askNotify() {
+    try {
+      if ("Notification" in window && Notification.permission === "default" && (!$("notifyDone") || $("notifyDone").checked)) Notification.requestPermission();
+    } catch { /* ignore */ }
+  }
+  if ($("notifyDone")) {
+    $("notifyDone").checked = store.get("df_notify", "1") === "1";
+    $("notifyDone").addEventListener("change", () => { store.set("df_notify", $("notifyDone").checked ? "1" : "0"); askNotify(); });
+  }
+  async function pollJobs() {
+    let jobs = [];
+    try { jobs = (await api("/api/jobs")).jobs || []; JM.failures = 0; }
+    catch { JM.failures++; }
+    const live = jobs.filter((j) => j.state === "running" || j.state === "paused");
+    for (const j of jobs) {
+      const was = JM.seen.get(j.id);
+      if (was && (was === "running" || was === "paused") && !(j.state === "running" || j.state === "paused")) {
+        const what = tr(KIND[j.kind] || "任务");
+        const nums = j.total ? ` ${j.done}/${j.total}` : "";
+        if (j.state === "done") notifyDone(tr("已完成：") + what + nums, "");
+        else if (j.state === "error") notifyDone(tr("出错：") + what, j.error || "");
+        else if (j.state === "stopped") notifyDone(tr("已停止：") + what + nums, "");
+      }
+      if (!was && live.includes(j)) askNotify();
+      JM.seen.set(j.id, j.state);
+    }
+    const pill = $("jobsPill");
+    if (live.length) {
+      const first = live[0];
+      const pct = first.total ? Math.round((100 * first.done) / first.total) : null;
+      $("jobsText").textContent = (live.length > 1 ? tr(`${live.length} 个任务进行中`) + " · " : "")
+        + tr(KIND[first.kind] || "任务") + (first.total ? ` ${first.done}/${first.total}` : "");
+      pill.hidden = false;
+      if (!JM.base) titleBase();
+      document.title = (pct !== null ? `(${pct}%) ` : "") + JM.base;
+    } else {
+      pill.hidden = true;
+      if (JM.base) { document.title = JM.base; JM.base = ""; }
+    }
+    JM.timer = setTimeout(pollJobs, live.length ? 1500 : (JM.failures > 3 ? 8000 : 3000));
+  }
+  JM.timer = setTimeout(pollJobs, 1200);
+  document.addEventListener("doifinder:lang", () => { JM.base = ""; });
+  // the pill opens the page most likely to own the job
+  $("jobsPill").addEventListener("click", () => {
+    const busy = { lookup: state.lookupBusy, download: state.dlBusy };
+    const t = Object.keys(busy).find((k) => busy[k]);
+    if (t) showTab(t);
+  });
+
+  // ---- drag and drop
+  const TEXT_TARGET = { lookup: "titles", download: "dois", preprint: "ppInput" };
+  const isText = (f) => /\.(txt|md|csv|tsv|bib|ris|json)$/i.test(f.name) || /^text\//.test(f.type);
+  const isPdf = (f) => /\.pdf$/i.test(f.name) || f.type === "application/pdf";
+  let dragDepth = 0;
+  const hasFiles = (e) => [...((e.dataTransfer && e.dataTransfer.types) || [])].includes("Files");
+  function veil(on, e) {
+    $("dropVeil").hidden = !on;
+    if (!on) return;
+    const items = [...((e && e.dataTransfer && e.dataTransfer.items) || [])];
+    const pdf = items.some((i) => i.type === "application/pdf");
+    $("dropTitle").textContent = tr(pdf ? "松开即可归档这些 PDF" : "松开即可导入");
+    $("dropSub").textContent = pdf ? tr(state.shell === "desktop" ? "按归档页的命名规则放进工作区" : "浏览器里拿不到文件路径；请用桌面版，或在归档页点「选择文件…」")
+      : tr(TEXT_TARGET[state.tab] ? "文本 / BibTeX / RIS 会追加到这一页的输入框" : "先切到「标题 → DOI」「DOI → PDF」或「预印本」页");
+  }
+  window.addEventListener("dragenter", (e) => { if (!hasFiles(e)) return; e.preventDefault(); dragDepth++; veil(true, e); });
+  window.addEventListener("dragover", (e) => { if (hasFiles(e)) e.preventDefault(); });
+  window.addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; veil(false); } });
+  window.addEventListener("drop", async (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault(); dragDepth = 0; veil(false);
+    const files = [...(e.dataTransfer.files || [])];
+    const texts = files.filter(isText);
+    if (files.some(isPdf) && state.shell !== "desktop") toast(tr("浏览器里拿不到文件路径；请用桌面版，或在归档页点「选择文件…」"));
+    if (!texts.length) return;
+    let target = TEXT_TARGET[state.tab];
+    if (!target) { showTab("lookup"); target = "titles"; }
+    const box = $(target);
+    const parts = [];
+    for (const f of texts) { try { parts.push(await f.text()); } catch { /* unreadable */ } }
+    if (!parts.length) return;
+    box.value = (box.value.trim() ? box.value.replace(/\s*$/, "\n") : "") + parts.join("\n").trim() + "\n";
+    box.dispatchEvent(new Event("input", { bubbles: true }));
+    toast(tr(`已导入 ${texts.length} 个文件`));
+  });
+  // desktop.py reports the real paths of dropped files: PDFs go straight to the archive
+  document.addEventListener("doifinder:drop-paths", (e) => {
+    const pdfs = (e.detail || []).filter((p) => /\.pdf$/i.test(p));
+    if (!pdfs.length) return;
+    showTab("archive");
+    runArchive(pdfs);
+  });
+
+  // desktop window: "退出" closes the window (the server stops with it)
+  window.addEventListener("pywebviewready", () => {
+    state.shell = "desktop";
+    document.documentElement.dataset.shell = "desktop";
+  });
+
   reloadBtn();
 })();

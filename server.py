@@ -102,6 +102,16 @@ JOBS: dict[str, dict] = {}
 JOBS_LOCK = threading.Lock()
 JOB_TTL = 3600
 SERVER: ThreadingHTTPServer | None = None
+# Set by desktop.py when the UI runs in its own native window: "desktop"; otherwise "browser".
+SHELL = "browser"
+# Callbacks the desktop shell registers: "focus" (bring the window forward), "quit" (close the window).
+APP_HOOKS: dict = {}
+
+
+def running_jobs() -> list[dict]:
+    """Jobs that are still working (paused ones included), for the close-window guard."""
+    return [{"id": jid, "kind": j.get("kind") or "", "done": j.get("done") or 0, "total": j.get("total") or 0}
+            for jid, j in list(JOBS.items()) if (j.get("state") or "") in ("running", "paused")]
 
 DEFAULT_SETTINGS = {
     "download_dir": os.path.join(os.path.expanduser("~"), "Downloads", "DOI Finder"),
@@ -1043,6 +1053,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True, "app": "doi-finder", "version": VERSION,
                                "build": _build_stamp(),
                                "jobs": len(JOBS), "frozen": FROZEN, "platform": sys.platform,
+                               "shell": SHELL,
                                "settings": public_settings()})
         if p == "/api/jobs":
             now = time.time()
@@ -1634,8 +1645,18 @@ class Handler(BaseHTTPRequestHandler):
 
         if p == "/api/quit":
             self._json({"ok": True})
-            threading.Timer(0.4, shutdown).start()
+            threading.Timer(0.4, APP_HOOKS.get("quit") or shutdown).start()
             return
+
+        if p == "/api/app/focus":                  # a second launch asks the running window to come forward
+            hook = APP_HOOKS.get("focus")
+            if not hook:
+                return self._json({"ok": False})
+            try:
+                hook()
+                return self._json({"ok": True})
+            except Exception as e:  # noqa: BLE001
+                return self._json({"ok": False, "error": str(e)})
 
         return self._json({"error": "not found"}, 404)
 
@@ -1693,8 +1714,32 @@ def shutdown():
         SERVER.shutdown()
 
 
-def main():
+def start(port: int = 0) -> str:
+    """Bind the server (not yet serving) and return its URL. desktop.py serves it in a thread."""
     global SERVER
+    port = port or pick_port()
+    SERVER = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    SERVER.daemon_threads = True
+    url = f"http://127.0.0.1:{port}/"
+    try:  # a windowed build has no stdout
+        print(f"DOI-FINDER-URL {url}", flush=True)
+    except Exception:  # noqa: BLE001
+        pass
+    log(f"started {url} (frozen={FROZEN}, shell={SHELL})")
+    return url
+
+
+def serve() -> None:
+    try:
+        SERVER.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        SERVER.server_close()
+        log("stopped")
+
+
+def main():
     env_port = int(os.environ.get("DOIFINDER_PORT") or 0)
     open_browser = (FROZEN or "--open" in sys.argv or env_port) and not os.environ.get("DOIFINDER_NO_BROWSER")
 
@@ -1705,24 +1750,10 @@ def main():
             show_ui(existing)
             return
 
-    port = env_port or pick_port()
-    SERVER = ThreadingHTTPServer(("127.0.0.1", port), Handler)
-    SERVER.daemon_threads = True
-    url = f"http://127.0.0.1:{port}/"
-    try:  # a windowed build has no stdout
-        print(f"DOI-FINDER-URL {url}", flush=True)
-    except Exception:  # noqa: BLE001
-        pass
-    log(f"started {url} (frozen={FROZEN})")
+    url = start(env_port)
     if open_browser:
         threading.Timer(0.7, lambda: show_ui(url)).start()
-    try:
-        SERVER.serve_forever()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        SERVER.server_close()
-        log("stopped")
+    serve()
 
 
 if __name__ == "__main__":

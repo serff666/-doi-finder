@@ -16,14 +16,6 @@
     { sel: "#statusText", zh: "本地应用 · Crossref / OpenAlex / ChemASAP", en: "Local app · Crossref / OpenAlex / ChemASAP" },
     { sel: "#reloadApp", zh: "刷新界面", en: "Reload UI" },
     { sel: "#quit", zh: "退出", en: "Quit" },
-    { sel: '#tabs button[data-tab="lookup"]', zh: "① 标题 → DOI", en: "① Title → DOI" },
-    { sel: '#tabs button[data-tab="download"]', zh: "② DOI → PDF", en: "② DOI → PDF" },
-    { sel: '#tabs button[data-tab="search"]', zh: "③ 主题搜索", en: "③ Topic search" },
-    { sel: '#tabs button[data-tab="chem"]', zh: "④ ChemASAP", en: "④ ChemASAP" },
-    { sel: '#tabs button[data-tab="journal"]', zh: "⑤ 期刊追新", en: "⑤ Journal feed" },
-    { sel: '#tabs button[data-tab="rg"]', zh: "⑥ ResearchGate", en: "⑥ ResearchGate" },
-    { sel: '#tabs button[data-tab="archive"]', zh: "⑦ 归档", en: "⑦ Archive" },
-    { sel: '#tabs button[data-tab="lab"]', zh: "⑧ 网页文献", en: "⑧ Lab pages" },
     { sel: "#start", zh: "开始批量检索", en: "Start batch lookup" },
     { sel: "#startDownload", zh: "⇩ 开始下载", en: "⇩ Start download" },
     { sel: "#pauseDownload", zh: "暂停", en: "Pause" },
@@ -202,7 +194,7 @@
       if (st.shown !== null) return;       // 已经整元素翻译过了
       const text = norm(el.textContent || "");
       if (!hasCJK(text)) return;
-      if (el.querySelector("a, input, select, textarea, img")) return;
+      if (el.querySelector("a, input, select, textarea, img, svg")) return;   // never wipe icons
       if (el.children.length > 3) return;
       const hit = lookup(dict, text);
       if (hit) { el.textContent = hit; st.shown = el.innerHTML; }
