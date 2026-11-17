@@ -19,6 +19,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import socket
 import struct
 import subprocess
@@ -228,110 +229,146 @@ class _CDP:
 _RG_CHALLENGE = ("security check", "temporarily unavailable", "unusual activity",
                  "attention required", "checking your browser")
 
-_RG_JS = """(() => {
-  const out = [];
+# Each list page is fetched with the tab's own cookies and parsed as a document (measured on a real profile:
+# 100 items per page, page 2 has the rest, and the server-rendered HTML already holds every link).
+# Reading the live DOM instead saw half-rendered lists and gave "a few dozen of several hundred".
+_RG_FETCH_JS = """(async () => {
+  const r = await fetch(%s, { credentials: 'include' });
+  const html = await r.text();
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const items = [];
   const seen = new Set();
-  document.querySelectorAll('a[href*="/publication/"]').forEach((a) => {
+  doc.querySelectorAll('a[href*="/publication/"]').forEach((a) => {
     const t = (a.textContent || '').replace(/\\s+/g, ' ').trim();
     if (t.length < 12) return;
-    if (seen.has(a.href)) return;
-    seen.add(a.href);
-    out.push({ title: t, url: a.href });
+    const href = new URL(a.getAttribute('href'), location.origin).href;
+    if (seen.has(href)) return;
+    seen.add(href);
+    items.push({ title: t, url: href });
   });
-  return JSON.stringify({ n: out.length, items: out.slice(0, %d),
-                          title: document.title });
+  const text = (doc.body && (doc.body.innerText || doc.body.textContent)) || '';
+  const m = text.match(/(?:Publications|Research items)\\s*\\(?\\s*([\\d,]{1,6})\\s*\\)?/i);
+  return JSON.stringify({ status: r.status, items: items, title: doc.title || '',
+                          expected: m ? (parseInt(m[1].replace(/,/g, ''), 10) || 0) : 0 });
 })()"""
+
+RG_MAX_PAGES = 120
+
+
+def rg_collect(read_page, *, max_items: int = 2000, max_pages: int = RG_MAX_PAGES, patience: int = 2,
+               progress=None) -> tuple[list[dict], int, str]:
+    """Walk an author's list page by page; returns (items, expected_total, note).
+
+    ``read_page(n)`` returns {"items": [...], "expected": int, "challenged": bool} for ``/research?page=n``
+    (100 items per page, measured on a real profile). The walk stops when the profile's stated total is reached,
+    when ``patience`` consecutive pages bring nothing new, or at a human check that is still showing.
+    Anything short of the stated total is reported in ``note`` instead of passing as complete.
+    """
+    items: list[dict] = []
+    seen: set[str] = set()
+    expected = 0
+    idle = 0
+    note = ""
+    for n in range(1, max_pages + 1):
+        try:
+            r = read_page(n)
+        except Exception as e:  # noqa: BLE001  - keep what was collected so far
+            note = f"第 {n} 页读取失败（{e}），已保留前面抓到的 {len(items)} 条，再点一次「抓取」重试"
+            break
+        expected = max(expected, int(r.get("expected") or 0))
+        if r.get("challenged"):
+            note = "抓取中途出现人机验证，请在弹出的窗口里点一下验证后再点「抓取」"
+            break
+        fresh = 0
+        for it in r.get("items") or []:
+            key = it.get("url") or it.get("title")
+            if key and key not in seen:
+                seen.add(key)
+                items.append(it)
+                fresh += 1
+        if progress:
+            progress(len(items), expected, n)
+        if len(items) >= max_items:
+            note = f"已达到单次上限 {max_items} 条"
+            break
+        if expected and len(items) >= expected:
+            break
+        idle = 0 if fresh else idle + 1
+        if idle >= patience:
+            break
+    if not note and expected and len(items) < expected:
+        note = f"页面标明共 {expected} 条，只抓到 {len(items)} 条，可能不全；再点一次「抓取」会重新翻页"
+    return items, expected, note
 
 
 def rg_publications(profile_dir: str, url: str, timeout: float = 90,
-                    max_items: int = 500) -> tuple[list[dict], str]:
+                    max_items: int = 2000, progress=None) -> tuple[list[dict], str]:
     """Read an author's publication list from ResearchGate in the logged-in browser.
 
     ResearchGate sits behind Cloudflare: plain HTTP always gets 403, and even a
     real browser is challenged until the user clears the check once in the visible
-    window. So this waits while the challenge is on screen, then scrapes the links.
+    window. So this waits while the challenge is on screen, then walks the list page by page.
+    Returns (items, note): ``note`` is empty for a complete scrape, otherwise it says what is missing.
     """
     browser = _shared(profile_dir)
     tab = None
     challenged = False
+    m = re.search(r"researchgate\.net(/profile/[^/?#]+)", url)
+    prefix = m.group(1) if m else ""
+    if not prefix:
+        return [], "请填 ResearchGate 作者主页链接（形如 https://www.researchgate.net/profile/姓名）"
     try:
-        tab = browser.open_tab(url)  # 直接开在目标页，省掉 about:blank 那一跳
+        tab = browser.open_tab(url)  # open straight on the target page
         tab.enable()
-        tab.focus()  # 验证页必须让人看见，否则点不了
-        started = time.time()
-        deadline = started + timeout
-        challenged = False
-        while time.time() < deadline:
-            tab.cdp.pump(0.4)
-            title = tab.title()
-            low = title.lower()
-            if any(k in low for k in _RG_CHALLENGE):
-                challenged = True
-                continue
-            html_len = tab.cdp.call("Runtime.evaluate", {
-                "expression": "document.body ? document.body.innerText.length : 0",
-                "returnByValue": True}, timeout=10).get("result", {}).get("value") or 0
-            if html_len > 1500 or time.time() - started > 20:
-                break
-        res = tab.cdp.call("Runtime.evaluate", {"expression": _RG_JS % max_items,
-                                                "returnByValue": True}, timeout=40)
-        raw = (res.get("result") or {}).get("value") or "{}"
-        data = json.loads(raw)
-        items = [x for x in (data.get("items") or []) if x.get("title")]
+        tab.focus()  # the check must be visible or it cannot be clicked
 
-        # ResearchGate 的论文列表是分页的，不是滚动加载。点"显示更多"或滚到底都没用，
-        # 必须逐页翻。这里按 URL 的 page 参数翻，直到某页不再给出新条目。
-        base = url.split("?")[0].rstrip("/")
-        if not base.endswith("/research"):
-            base = base + "/research"
-        seen = {x.get("url") or x.get("title") for x in items}
-        empty_pages = 0
-        for page_no in range(2, 61):
-            if len(items) >= max_items:
-                break
-            try:
-                tab.cdp.call("Page.navigate", {"url": f"{base}?page={page_no}"}, timeout=45)
-            except Exception:  # noqa: BLE001
-                break
-            # 等列表渲染出来：最多等 12 秒，看到条目就够了
-            waited = 0.0
-            while waited < 12:
-                time.sleep(0.8)
-                waited += 0.8
+        def clear_check(limit: float) -> bool:
+            """Wait up to ``limit`` seconds for a human check to go away. True when the page is clear."""
+            nonlocal challenged
+            end = time.time() + limit
+            while time.time() < end:
+                tab.cdp.pump(0.4)
+                if not any(k in tab.title().lower() for k in _RG_CHALLENGE):
+                    return True
+                challenged = True
+            return False
+
+        def fetch_page(n: int) -> dict:
+            path = f"{prefix}/research?page={n}"
+            res = tab.cdp.call("Runtime.evaluate", {
+                "expression": _RG_FETCH_JS % json.dumps(path), "awaitPromise": True,
+                "returnByValue": True}, timeout=60)
+            return json.loads((res.get("result") or {}).get("value") or "{}")
+
+        def read_page(n: int) -> dict:
+            if not clear_check(timeout if n == 1 else 120):
+                return {"items": [], "challenged": True}
+            got: dict = {}
+            for attempt in range(3):                       # a failed request is retried, not read as "no more pages"
                 try:
-                    res = tab.cdp.call("Runtime.evaluate", {"expression": _RG_JS % max_items,
-                                                            "returnByValue": True}, timeout=40)
-                    got = json.loads((res.get("result") or {}).get("value") or "{}")
+                    got = fetch_page(n)
                 except Exception:  # noqa: BLE001
-                    continue
-                page_items = [x for x in (got.get("items") or []) if x.get("title")]
-                if page_items:
-                    break
-            fresh = 0
-            for it in page_items:
-                key = it.get("url") or it.get("title")
-                if key and key not in seen:
-                    seen.add(key)
-                    items.append(it)
-                    fresh += 1
-            if not fresh:
-                empty_pages += 1
-                if empty_pages >= 2:  # 连续两页没有新内容，认为到底
-                    break
-            else:
-                empty_pages = 0
+                    got = {}
+                if got.get("status") == 200 and not any(k in (got.get("title") or "").lower() for k in _RG_CHALLENGE):
+                    return got
+                time.sleep(1.5 * (attempt + 1))
+            if any(k in (got.get("title") or "").lower() for k in _RG_CHALLENGE) or got.get("status") in (403, 429):
+                return {"items": [], "challenged": True}
+            raise BrowserError(f"第 {n} 页多次请求失败（HTTP {got.get('status') or '无响应'}）")
+
+        items, expected, note = rg_collect(read_page, max_items=max_items, progress=progress)
         if not items:
             if challenged:
                 return [], "ResearchGate 仍在人机验证：窗口已调到前台并保留，请点一下验证后重试"
-            return [], f"页面上没有找到论文链接（当前标题：{data.get('title') or '空'}）"
-        return items, ""
+            return [], "页面上没有找到论文链接（可能没登录或页面结构变了）"
+        return items, note
     except BrowserError as e:
         return [], f"浏览器通道失败：{e}"
     except Exception as e:  # noqa: BLE001
         return [], f"抓取失败：{type(e).__name__}"
     finally:
         if tab is not None:
-            if not challenged:  # 验证页留着，用户点完还能复用
+            if not challenged:  # leave a check on screen so the user's click can be reused
                 try:
                     browser.close_tab(tab.target_id)
                 except Exception:  # noqa: BLE001

@@ -606,8 +606,13 @@ def run_rg_job(jid: str, conf: dict, url: str) -> None:
     """ResearchGate 抓取任务。翻页慢，必须走后台，前端按 job 轮询。"""
     job = JOBS[jid]
     try:
+        def progress(n: int, expected: int, page: int) -> None:
+            job["done"] = n
+            job["total"] = max(expected, n, 1)
+            job["current"] = f"第 {page} 页，已抓到 {n} 条" + (f" / 页面标明 {expected} 条" if expected else "")
+
         items, err = browser.rg_publications(conf["profile"], url,
-                                             timeout=float(conf.get("timeout") or 90))
+                                             timeout=float(conf.get("timeout") or 90), progress=progress)
         job["results"] = items
         job["total"] = max(1, len(items))
         job["done"] = len(items)
@@ -615,7 +620,7 @@ def run_rg_job(jid: str, conf: dict, url: str) -> None:
             job["error"] = err
             job["state"] = "error"
         else:
-            job["markdown"] = f"抓到 {len(items)} 条" + (f"（{err}）" if err else "")
+            job["markdown"] = f"抓到 {len(items)} 条" + (f"。{err}" if err else "，与页面标明的数量一致或页面未标明数量")
             job["state"] = "done"
     except Exception as e:  # noqa: BLE001
         job["error"] = f"{type(e).__name__}: {e}"
