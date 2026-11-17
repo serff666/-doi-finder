@@ -54,6 +54,10 @@
         <button class="btn sm ghost" id="pickDir" type="button">选择…</button>
         <button class="btn sm ghost" id="openDir" type="button">打开</button>
       </div>
+      <div class="hist-anchor">
+        <button class="cmd-btn hist-btn" id="histBtn" type="button" title="这一页的历史记录" hidden><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></svg><span>历史记录</span><span class="hist-count" id="histCount"></span></button>
+        <div class="hist-pop" id="histPop" hidden></div>
+      </div>
       <button class="cmd-btn" id="cmdOpen" type="button" title="命令面板（Ctrl+K）"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><span>跳转或执行…</span><kbd>Ctrl K</kbd></button>
     </header>
 
@@ -76,7 +80,7 @@ Coherence in Chemistry: Foundations and Frontiers"></textarea>
         <div class="input-bottom">
           <span id="lineCount">当前 0 篇文献</span>
           <span>
-            <button class="text-btn" id="fillExample" type="button">填入示例</button> · ·
+            <button class="text-btn" id="fillExample" type="button">填入示例</button> ·
             <button class="text-btn" id="importFile" type="button">导入 TXT / MD</button> ·
             <button class="text-btn" id="clearInput" type="button">清空</button>
           </span>
@@ -144,19 +148,27 @@ Coherence in Chemistry: Foundations and Frontiers"></textarea>
         <div><h2>检索结果</h2><p id="runStatus">尚未开始检索</p></div>
         <div class="export-buttons">
           <button id="retryLookup" class="btn primary" type="button" hidden></button>
-          <button id="exportXlsx" class="btn" disabled type="button">⇩ Excel</button>
-          <button id="exportMd" class="btn" disabled type="button">⇩ Markdown</button>
-          <button id="exportHtml" class="btn" disabled type="button">⇩ HTML</button>
-          <button id="exportCsv" class="btn" disabled type="button">⇩ CSV</button>
-          <button id="exportTxt" class="btn" disabled type="button">⇩ DOI 清单</button>
-          <select id="citeStyle" class="btn" style="padding:4px 6px" title="参考文献格式">
-            <option value="gbt">GB/T 7714</option>
-            <option value="acs">ACS</option>
-            <option value="apa">APA</option>
-          </select>
-          <button id="exportCite" class="btn" disabled type="button" title="按所选格式生成参考文献表">⇩ 参考文献</button>
           <button id="copyDois" class="btn" disabled type="button">⧉ 复制</button>
-          <button id="toDownload" class="btn" disabled type="button">→ 下载这些 PDF</button>
+          <details class="menu">
+            <summary class="btn">导出</summary>
+            <div class="menu-pop">
+              <button id="exportXlsx" class="menu-item" disabled type="button">⇩ Excel</button>
+              <button id="exportCsv" class="menu-item" disabled type="button">⇩ CSV</button>
+              <button id="exportMd" class="menu-item" disabled type="button">⇩ Markdown</button>
+              <button id="exportHtml" class="menu-item" disabled type="button">⇩ HTML</button>
+              <button id="exportTxt" class="menu-item" disabled type="button">⇩ DOI 清单</button>
+              <div class="menu-sep"></div>
+              <div class="menu-row">
+                <button id="exportCite" class="menu-item" disabled type="button" title="按所选格式生成参考文献表">⇩ 参考文献</button>
+                <select id="citeStyle" class="smallinput" title="参考文献格式">
+                  <option value="gbt">GB/T 7714</option>
+                  <option value="acs">ACS</option>
+                  <option value="apa">APA</option>
+                </select>
+              </div>
+            </div>
+          </details>
+          <button id="toDownload" class="btn primary" disabled type="button">→ 下载这些 PDF</button>
         </div>
       </div>
       <div class="progress"><div class="bar" id="progressBar"></div></div>
@@ -242,16 +254,21 @@ https://doi.org/10.1073/pnas.2321668121"></textarea>
         <div><h2>下载结果</h2><p id="dlStatus">尚未开始</p></div>
         <div class="export-buttons">
           <button class="btn primary" id="retryDownload" type="button" hidden></button>
-          <button class="btn" id="openBlocked" disabled type="button">浏览器打开待处理</button>
+          <label class="toggle-chip"><input type="checkbox" id="onlyMissing"> 只看未获取</label>
           <button class="btn" id="openDest" disabled type="button">打开下载目录</button>
-          <button class="btn" id="exportDlCsv" disabled type="button">⇩ 结果 CSV</button>
-          <label class="tiny-tag" style="display:inline-flex;gap:6px;align-items:center;margin-right:8px">
-            <input type="checkbox" id="onlyMissing"> 只看未获取
-          </label>
-          <button class="btn" id="exportMissing" disabled type="button">⇩ 未获取清单</button>
-          <button class="btn" id="missingToPreprint" disabled type="button" title="把没下到的 DOI 送到「⑩ 预印本」页，找同一篇的预印本">找预印本版本</button>
-          <button class="btn" id="exportTask" disabled type="button">⇩ 保存任务</button>
-          <button class="btn" id="importTask" type="button">⇧ 导入任务</button>
+          <details class="menu">
+            <summary class="btn">更多</summary>
+            <div class="menu-pop">
+              <button class="menu-item" id="openBlocked" disabled type="button">浏览器打开待处理</button>
+              <button class="menu-item" id="missingToPreprint" disabled type="button" title="把没下到的 DOI 送到「⑩ 预印本」页，找同一篇的预印本">找预印本版本</button>
+              <div class="menu-sep"></div>
+              <button class="menu-item" id="exportDlCsv" disabled type="button">⇩ 结果 CSV</button>
+              <button class="menu-item" id="exportMissing" disabled type="button">⇩ 未获取清单</button>
+              <div class="menu-sep"></div>
+              <button class="menu-item" id="exportTask" disabled type="button">⇩ 保存任务</button>
+              <button class="menu-item" id="importTask" type="button">⇧ 导入任务</button>
+            </div>
+          </details>
           <input type="file" id="taskPicker" accept=".json,.csv,application/json,text/csv" hidden>
         </div>
       </div>
@@ -267,7 +284,7 @@ https://doi.org/10.1073/pnas.2321668121"></textarea>
   <!-- ============================================================ 3. search -->
   <section class="tabpanel" id="tab-search" hidden>
     <section class="panel" style="padding:22px 25px">
-      <div class="section-title"><h2>主题 / 作者检索</h2><span class="tiny-tag" id="searchSourceTag">OpenAlex</span></div>
+      <div class="section-title meta"><span class="tiny-tag" id="searchSourceTag">OpenAlex</span></div>
       <div class="filters">
         <div class="set-field"><label for="q">主题关键词</label><input id="q" placeholder="e.g. perylene bisimide exciton"></div>
         <div class="set-field"><label for="qAuthor">作者（可选）</label><input id="qAuthor" placeholder="Author name"></div>
@@ -276,13 +293,13 @@ https://doi.org/10.1073/pnas.2321668121"></textarea>
         <div class="set-field"><label for="yTo">截止年</label><input id="yTo" placeholder="2026" inputmode="numeric"></div>
         <label class="setting inline"><input id="qOa" type="checkbox"><span>仅开放获取</span></label>
         <button class="btn primary" id="runSearch" type="button">检索</button>
-        <button class="btn sm" id="findOrcid" type="button">按作者名查 ORCID</button>
       </div>
       <div id="orcidCandidates" class="orcid-chips"></div>
       <div class="searchbar-actions" style="margin-top:8px">
         <span id="orcidBar" class="orcid-chips" style="margin:0"></span>
         <span class="spacer"></span>
-        <button class="btn sm" id="saveMyOrcid" type="button">存为我的 ORCID</button>
+        <button class="btn sm ghost" id="findOrcid" type="button">按作者名查 ORCID</button>
+        <button class="btn sm ghost" id="saveMyOrcid" type="button">存为我的 ORCID</button>
       </div>
       <div id="searchFeedback" class="feedback"></div>
       <div class="searchbar-actions">
@@ -303,7 +320,7 @@ https://doi.org/10.1073/pnas.2321668121"></textarea>
   <!-- ============================================================ 4. ChemASAP -->
   <section class="tabpanel" id="tab-chem" hidden>
     <section class="panel" style="padding:22px 25px">
-      <div class="section-title"><h2>ChemASAP 最新 ASAP</h2><span class="tiny-tag" id="chemUpdated">来自 api.baranlab.org</span></div>
+      <div class="section-title meta"><span class="tiny-tag" id="chemUpdated">来自 api.baranlab.org</span></div>
       <div class="filters chem-filters">
         <div class="set-field grow"><label for="chemQuery">筛选（标题 / 作者 / 期刊）</label><input id="chemQuery" placeholder="留空显示全部"></div>
         <label class="setting inline"><input id="chemOa" type="checkbox"><span>只看 OA</span></label>
@@ -326,7 +343,7 @@ https://doi.org/10.1073/pnas.2321668121"></textarea>
   <!-- ============================================================ 5. journal watch -->
   <section class="tabpanel" id="tab-journal" hidden>
     <section class="panel" style="padding:22px 25px">
-      <div class="section-title"><h2>期刊追新</h2><span class="tiny-tag">Crossref</span></div>
+      <div class="section-title meta"><span class="tiny-tag">Crossref</span></div>
       <div class="filters">
         <div class="set-field grow"><label for="jq">添加期刊（名称或 ISSN）</label>
           <input id="jq" placeholder="例如 Journal of Chemical Physics 或 0021-9606"></div>
@@ -370,7 +387,7 @@ https://doi.org/10.1073/pnas.2321668121"></textarea>
   <!-- ============================================================ 6. ResearchGate -->
   <section class="tabpanel" id="tab-rg" hidden>
     <section class="panel" style="padding:22px 25px">
-      <div class="section-title"><h2>ResearchGate 作者论文</h2>
+      <div class="section-title meta">
         <span class="tiny-tag" style="display:inline-flex;align-items:center;gap:6px">走已登录的
           <select class="smallinput" id="rgBrowser" style="width:auto;margin:0;padding:2px 6px">
             <option value="auto">自动（Chrome 优先）</option>
@@ -407,21 +424,23 @@ https://doi.org/10.1073/pnas.2321668121"></textarea>
   <!-- ============================================================ 6. archive -->
   <section class="tabpanel" id="tab-lab" hidden>
     <section class="panel" style="padding:22px 25px">
-      <div class="section-title"><h2>网页文献</h2><span class="tiny-tag">任何课题组 publications 页</span></div>
-      <p class="tiny">输入实验室论文页地址，软件用真实浏览器打开、逐轮加载，抓出标题和 PDF 直链，可直接批量下载。</p>
-      <div class="row" style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">
-        <input id="labUrl" placeholder="https://example.edu/group/publications.html" style="flex:1;min-width:320px">
+      <div class="section-title meta"><span class="tiny-tag">任何课题组 publications 页</span></div>
+      <div class="filters chem-filters">
+        <div class="set-field grow"><label for="labUrl">页面地址</label>
+          <input id="labUrl" spellcheck="false" placeholder="https://example.edu/group/publications.html"></div>
         <button class="btn primary" id="labFetch" type="button">抓取</button>
         <button class="btn" id="labStop" type="button">停止</button>
       </div>
-      <div class="tiny" id="labFeedback" style="margin-top:8px"></div>
-      <div class="row" style="display:flex;gap:10px;margin-top:10px;align-items:center">
-        <span class="tiny" id="labCount">尚未抓取</span>
-        <button class="btn" id="labAll" type="button">全选</button>
-        <button class="btn" id="labNone" type="button">取消全选</button>
-        <button class="btn" id="labClear" type="button">清空</button>
-        <button class="btn primary" id="labToDoi" type="button">送去解析 DOI（推荐）</button>
-        <button class="btn" id="labDownload" type="button">下载选中（PDF 直链 / DOI 分流）</button>
+      <p class="aux page-note">输入实验室论文页地址，软件用真实浏览器打开、逐轮加载，抓出标题和 PDF 直链，可直接批量下载。</p>
+      <div class="tiny" id="labFeedback"></div>
+      <div class="searchbar-actions">
+        <span class="aux" id="labCount">尚未抓取</span>
+        <span class="spacer"></span>
+        <button class="btn sm" id="labAll" type="button">全选</button>
+        <button class="btn sm" id="labNone" type="button">取消全选</button>
+        <button class="btn sm" id="labClear" type="button">清空</button>
+        <button class="btn sm" id="labDownload" type="button">下载选中（PDF 直链 / DOI 分流）</button>
+        <button class="btn sm primary" id="labToDoi" type="button">送去解析 DOI（推荐）</button>
       </div>
       <div id="labRoot"></div>
     </section>
@@ -429,7 +448,7 @@ https://doi.org/10.1073/pnas.2321668121"></textarea>
 
   <section class="tabpanel" id="tab-archive" hidden>
     <section class="panel" style="padding:22px 25px">
-      <div class="section-title"><h2>手动归档（知网 / 其它来源的 PDF）</h2><span class="tiny-tag">按规范命名入库</span></div>
+      <div class="section-title meta"><span class="tiny-tag">按规范命名入库</span></div>
       <div class="archive-grid">
         <div class="archive-drop">
           <div class="empty-symbol">⇪</div>
@@ -473,8 +492,8 @@ https://doi.org/10.1073/pnas.2321668121"></textarea>
 
   <section class="tabpanel" id="tab-journaldl" hidden>
     <section class="panel" style="padding:22px 25px">
-      <div class="section-title"><h2>期刊文库</h2><span class="tiny-tag">整刊回溯 · 按刊/年/卷期归档</span></div>
-      <ol class="aux" style="margin:4px 0 14px 18px;line-height:1.7">
+      <div class="section-title meta"><span class="tiny-tag">整刊回溯 · 按刊/年/卷期归档</span></div>
+      <ol class="stepper">
         <li><b>选刊</b>：填期刊名或 ISSN（年份留空 = 从创刊到今年）</li>
         <li><b>抓取书目</b>：从 Crossref 列出这本刊的全部文章，并按类型默认勾选</li>
         <li><b>下载选中</b>：按「刊名 / 年份 / Volume 卷, Issue 期」分文件夹保存</li>
@@ -521,7 +540,7 @@ https://doi.org/10.1073/pnas.2321668121"></textarea>
   <!-- ============================================================ 10. preprints -->
   <section class="tabpanel" id="tab-preprint" hidden>
     <section class="panel">
-      <div class="section-title"><h2>预印本（ChemRxiv）</h2><span class="tiny-tag">正式版下不到时，找同一篇的预印本</span></div>
+      <div class="section-title meta"><span class="tiny-tag">正式版下不到时，找同一篇的预印本</span></div>
       <p class="aux" style="margin:4px 0 12px">预印本的标题和 DOI 常常和正式版不一样。这里每行填一个<b>论文标题</b>或<b>期刊版 DOI</b>，
         软件用期刊记录里登记的预印本链接、标题、第一作者和年份去对，并写明每条是怎么对上的。
         预印本可能和正式版内容有出入，请自己核对。</p>

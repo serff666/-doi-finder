@@ -142,12 +142,32 @@ DRIVER = r"""
     await until(() => /archive/.test($("arFeedback").textContent), "archive feedback");
     ok("archive reports the result", /2 \/ 2/.test($("arFeedback").textContent), $("arFeedback").textContent);
 
+    // ---- page furniture: history button, collapsed download settings, idle counters, menus
+    document.querySelector('[data-tab="lookup"]').click(); await sleep(30);
+    ok("history button shows on a page with saved tasks", !$("histBtn").hidden && $("histPop").contains($("hist-lookup")));
+    $("histBtn").click();
+    ok("history opens as a popover with only this page's list", !$("histPop").hidden && !$("hist-lookup").hidden && $("hist-search").hidden);
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    ok("Escape closes it", $("histPop").hidden);
+    key(",");
+    ok("no history button on the settings page", $("histBtn").hidden);
+    document.querySelector('[data-tab="lookup"]').click();
+    ok("download settings start collapsed to one line", $("lkOpts").tagName === "DETAILS" && !$("lkOpts").open, $("lkOpts").tagName);
+    ok("the line says where files go and which channels run", /Will be saved to/.test($("lkWhere").textContent) && /workers 3/.test($("lkChips").textContent),
+       $("lkWhere").textContent + " | " + $("lkChips").textContent);
+    $("lkWorkers").value = "5"; $("lkWorkers").dispatchEvent(new Event("change", { bubbles: true })); await sleep(20);
+    ok("and follows changes", /workers 5/.test($("lkChips").textContent), $("lkChips").textContent);
+    ok("empty counters stay hidden", $("statTotal").closest(".summary").classList.contains("idle"));
+    const menu = $("exportXlsx").closest("details.menu");
+    menu.open = true; $("exportXlsx").disabled = false; $("exportXlsx").click(); await sleep(20);
+    ok("a menu closes after an item is used", !menu.open);
+
     // ---- language round trip must not wipe icons
     $("langToggle").click(); await sleep(80);
-    ok("Chinese labels", /标题 → DOI/.test(document.querySelector('[data-tab="lookup"]').textContent) && $("pageTitle").textContent === "归档", $("pageTitle").textContent);
+    ok("Chinese labels", /标题 → DOI/.test(document.querySelector('[data-tab="lookup"]').textContent) && $("pageTitle").textContent === "标题 → DOI", $("pageTitle").textContent);
     ok("icons survive the switch to Chinese", icons() === 11, icons());
     $("langToggle").click(); await sleep(80);
-    ok("icons survive the switch back", icons() === 11 && $("pageTitle").textContent === "Archive", icons() + " " + $("pageTitle").textContent);
+    ok("icons survive the switch back", icons() === 11 && $("pageTitle").textContent === "Title → DOI", icons() + " " + $("pageTitle").textContent);
   } catch (e) { out.err = String(e && e.stack || e); }
   const pre = document.createElement("pre"); pre.id = "result"; pre.textContent = JSON.stringify(out);
   document.body.appendChild(pre);

@@ -583,6 +583,11 @@ window.DF_EN = {
   "期刊信息（审稿周期 / 分区 / 影响因子）": "Journal info (review time / quartile / impact factor)",
   "：还没有数据。点右边按钮从 GitHub 下载约 3 MB，只保存在你的电脑上。": ": no data yet. Click the button on the right to download about 3 MB from GitHub; it is stored only on your computer.",
   // ---- app shell (sidebar, settings page, palette, status bar)
+  "导出": "Export",
+  "更多": "More",
+  "更改": "Change",
+  "这一页的历史记录": "This page's saved tasks",
+  "页面地址": "Page URL",
   "标题 → DOI": "Title → DOI",
   "主题搜索": "Topic search",
   "设置": "Settings",

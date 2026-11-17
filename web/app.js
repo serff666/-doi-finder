@@ -140,8 +140,10 @@ window.addEventListener("unhandledrejection", (e) => {
       <div class="hist-bar"><button class="btn sm" type="button" data-act="new">新建任务（不清空当前页面）</button>
         <span class="aux">结果会自动保存在本机，关掉程序再打开也还在</span></div>
       <div class="hist-list"></div>`;
-    const panel = document.getElementById("tab-" + tabId);
-    panel.insertBefore(box, panel.firstChild);
+    // every page's history lives in one popover under the "历史记录" button of the top bar
+    box.dataset.histFor = tabId;
+    box.open = true;
+    $("histPop").appendChild(box);
     const listEl = box.querySelector(".hist-list"), nEl = box.querySelector(".hist-n");
     const when = (ts) => { try { return new Date(ts * 1000).toLocaleString(locale(), { hour12: false }); } catch { return ""; } };
 
@@ -153,6 +155,7 @@ window.addEventListener("unhandledrejection", (e) => {
           <button class="btn sm" type="button" data-act="open">打开</button>
           <button class="btn sm" type="button" data-act="del">删除</button></div>`).join("")
         : `<div class="aux hist-empty">还没有历史记录</div>`;
+      syncHist();
     }
     async function refresh() {
       try { H.list = (await api("/api/history?kind=" + kind)).items || []; } catch { H.list = []; }
@@ -201,6 +204,7 @@ window.addEventListener("unhandledrejection", (e) => {
         H.restoring = true;
         try { o.restore(rec.payload || {}); } finally { setTimeout(() => { H.restoring = false; }, 50); }
         H.id = id; draw();
+        $("histPop").hidden = true;
         toast(tr("已打开：") + (rec.title || when(rec.created)));
       } catch (err) { toast(tr("打开失败：") + err.message); }
     });
@@ -217,9 +221,38 @@ window.addEventListener("unhandledrejection", (e) => {
       } catch { /* keep the empty page */ }
       setTimeout(() => { H.ready = true; }, 100);
     };
+    H.tab = tabId;
     HIST[kind] = H;
     return H;
   }
+  // the top-bar button shows the current page's history, or nothing for pages without one
+  function syncHist() {
+    let cur = null;
+    document.querySelectorAll("#histPop > .hist").forEach((b) => {
+      const mine = b.dataset.histFor === state.tab;
+      b.hidden = !mine;
+      if (mine) cur = b;
+    });
+    const H = Object.values(HIST).find((h) => h.tab === state.tab);
+    $("histBtn").hidden = !cur;
+    $("histCount").textContent = H && H.list.length ? String(H.list.length) : "";
+    if (!cur) $("histPop").hidden = true;
+  }
+  $("histBtn").addEventListener("click", (e) => { e.stopPropagation(); $("histPop").hidden = !$("histPop").hidden; });
+  document.addEventListener("mousedown", (e) => {
+    if (!$("histPop").hidden && !e.target.closest(".hist-anchor")) $("histPop").hidden = true;
+    document.querySelectorAll("details.menu[open]").forEach((m) => { if (!m.contains(e.target)) m.open = false; });
+  });
+  // a menu closes once one of its items has been used
+  document.addEventListener("click", (e) => {
+    const it = e.target.closest(".menu-pop .menu-item");
+    if (it) { const m = it.closest("details.menu"); if (m) m.open = false; }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    $("histPop").hidden = true;
+    document.querySelectorAll("details.menu[open]").forEach((m) => { m.open = false; });
+  });
   const panelSnap = (k) => (_allPanels[k] ? _allPanels[k].getState() : null);
   const panelBack = (k, st, build) => { if (_allPanels[k]) _allPanels[k].setState(st, build); };
   const countBy = (rows, f) => rows.filter(f).length;
@@ -257,6 +290,8 @@ window.addEventListener("unhandledrejection", (e) => {
     });
     document.querySelectorAll(".tabpanel").forEach((p) => { p.hidden = p.id !== "tab-" + name; });
     paintPageHead();
+    $("histPop").hidden = true;
+    syncHist();
     const c = document.querySelector(".content");
     if (c) c.scrollTop = 0;
     try { history.replaceState(null, "", "#" + name); } catch { /* file:// or sandboxed */ }
@@ -312,6 +347,7 @@ window.addEventListener("unhandledrejection", (e) => {
     const found = rows.filter((r) => r.doi && ["matched", "likely", "provided", "edited"].includes(r.status)).length;
     const review = rows.filter((r) => r.status === "uncertain").length;
     $("statTotal").textContent = rows.length;
+    $("statTotal").closest(".summary").classList.toggle("idle", !rows.length);
     $("statFound").textContent = found;
     $("statReview").textContent = review;
     $("statDone").textContent = done;
@@ -708,6 +744,7 @@ window.addEventListener("unhandledrejection", (e) => {
     $("retryDownload").hidden = !nf || state.dlBusy;
     $("retryDownload").textContent = `↻ 重试 ${nf} 个失败的`;
     $("dlTotal").textContent = rows.length || parseDois($("dois").value).length;
+    $("dlTotal").closest(".summary").classList.toggle("idle", !rows.length);
     $("dlDone").textContent = c("downloaded") + c("exists");
     $("dlNoOa").textContent = c("no_oa");
     $("dlFail").textContent = c("failed") + c("invalid") + c("blocked");
@@ -1407,9 +1444,16 @@ window.addEventListener("unhandledrejection", (e) => {
   function makeDlPanel(prefix, slot, opts) {
     opts = opts || {};
     const P = (n) => prefix + n;
-    slot.innerHTML = `<div class="dl-opts" id="${P("Opts")}">
+    slot.innerHTML = `<details class="dl-opts" id="${P("Opts")}">
+        <summary class="dl-sum">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+          <span class="dl-where" id="${P("Where")}"></span>
+          <span class="dl-chips" id="${P("Chips")}"></span>
+          <span class="dl-edit">更改</span>
+        </summary>
+        <div class="dl-body">
         <div class="dl-row">
-          <span class="dl-opts-t">本页下载设置</span>
+          <label class="dl-lab" for="${P("Dir")}">本页下载设置</label>
           <input class="smallinput dl-dir" id="${P("Dir")}" type="text" spellcheck="false" placeholder="工作区（留空 = 用最上面的默认工作区）">
           <button class="btn sm" id="${P("Pick")}" type="button">选择…</button>
           <button class="btn sm" id="${P("Open")}" type="button">打开</button>
@@ -1427,14 +1471,14 @@ window.addEventListener("unhandledrejection", (e) => {
             <option value="volume_issue">按年份 → 卷期</option>
           </select>
         </div>
-        <div class="dl-where aux" id="${P("Where")}"></div>
         <div class="dl-row">
           <label class="setting inline"><input id="${P("Sci")}" type="checkbox"><span>Sci-Hub</span></label>
           <label class="setting inline"><input id="${P("Inst")}" type="checkbox"><span>机构浏览器</span></label>
           <label class="setting inline" title="2025 年及以后的文献，机构浏览器之前先用期刊记录登记的 ChemRxiv 预印本"><input id="${P("PreEarly")}" type="checkbox"><span>新文献先预印本</span></label>
           <select class="smallinput" id="${P("Workers")}" title="并发"><option value="1">并发 1</option><option value="3">并发 3</option><option value="5">并发 5</option></select>
         </div>
-      </div>
+        </div>
+      </details>
       <div id="${P("Panel")}" class="run-panel" hidden role="status" aria-live="polite">
         <div class="run-head">
           <strong id="${P("RunTitle")}"></strong>
@@ -1620,17 +1664,19 @@ window.addEventListener("unhandledrejection", (e) => {
       const ex = { flat: [], year: ["2025"], journal: ["期刊名"], journal_year: ["期刊名", "2025"], volume_issue: ["2025", "Volume 1, Issue 2"] }[t.structure] || [];
       G("Where").textContent = tr("将保存到：")
         + [t.workspace || tr("（还没设工作区）"), t.collection, ...ex.map(tr), tr("文件.pdf")].join(sep);
+      const on = [G("Sci").checked && "Sci-Hub", G("Inst").checked && tr("机构浏览器"), G("PreEarly").checked && tr("新文献先预印本")].filter(Boolean);
+      G("Chips").innerHTML = on.concat([tr("并发 " + G("Workers").value)]).map((x) => `<span>${esc(x)}</span>`).join("");
     }
     const dirHint = () => { G("Dir").placeholder = tr(`工作区（留空 = 默认：${gv.dir() || "未设置"}）`); };
     function syncDefaults() {
       G("Dir").value = saved.dir !== undefined ? saved.dir : "";
       dirHint();
       G("Struct").value = saved.struct || "";
-      refreshWhere();
       G("Sci").checked = saved.scihub !== undefined ? !!saved.scihub : gv.scihub();
       G("Inst").checked = saved.inst !== undefined ? !!saved.inst : gv.inst();
       G("PreEarly").checked = saved.pre !== undefined ? !!saved.pre : gv.pre();
       G("Workers").value = saved.workers !== undefined ? String(saved.workers) : gv.workers();
+      refreshWhere();
     }
     function remember(k, v) {
       saved[k] = v;
@@ -3107,6 +3153,31 @@ window.addEventListener("unhandledrejection", (e) => {
     showTab("archive");
     runArchive(pdfs);
   });
+
+  // ---- empty states: line icons instead of text glyphs (pages render these in many places)
+  const EMPTY_ICON = {
+    "⌕": '<circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/>',
+    "⇩": '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/>',
+    "⇪": '<path d="M12 21V9"/><path d="m7 14 5-5 5 5"/><path d="M5 3h14"/>',
+    "⚗": '<path d="M9 3h6"/><path d="M10 3v6l-5.2 9A2 2 0 0 0 6.5 21h11a2 2 0 0 0 1.7-3L14 9V3"/><path d="M7.5 15h9"/>',
+    "≣": '<path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"/><path d="M5 17a3 3 0 0 1 3-3h11"/>',
+    "▤": '<path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"/><path d="M9 8h6M9 11h4"/>',
+    "✓": '<circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/>',
+    "!": '<circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 16.5v.5"/>',
+    "R": '<circle cx="12" cy="8" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/>',
+    "…": '<path d="M12 3a9 9 0 1 0 9 9" class="spin-path"/>',
+  };
+  function iconizeEmpty(root) {
+    (root.querySelectorAll ? root.querySelectorAll(".empty-symbol") : []).forEach((el) => {
+      if (el.querySelector("svg")) return;
+      const g = el.textContent.trim(), path = EMPTY_ICON[g];
+      if (!path) return;
+      el.innerHTML = `<svg class="ico${g === "…" ? " spinning" : ""}" viewBox="0 0 24 24" aria-hidden="true">${path}</svg>`;
+    });
+  }
+  iconizeEmpty(document);
+  new MutationObserver((muts) => muts.forEach((m) => m.addedNodes.forEach((n) => { if (n.nodeType === 1) iconizeEmpty(n.parentNode || n); })))
+    .observe(document.querySelector(".content"), { childList: true, subtree: true });
 
   // desktop window: "退出" closes the window (the server stops with it)
   window.addEventListener("pywebviewready", () => {

@@ -16,6 +16,8 @@
 - Command palette (`Ctrl+K`) for every page and action; shortcuts `Ctrl+1…0` (pages ①…⑩), `Ctrl+,`, `Ctrl+Enter` (main action of the page), `Ctrl+S`; collapsible icon sidebar.
 - Job monitor: the status bar and the window title show the running job and its progress; a finished, stopped or failed job is announced, with a system notification when the window is in the background.
 - Drag and drop: text / BibTeX / RIS files dropped on ①, ② or ⑩ are appended to the input box.
+- Less clutter on every page: saved tasks moved from a strip above each page into a "History" button in the top bar (a popover with the current page's list); each page's download settings collapse to one line ("Will be saved to … · Sci-Hub · workers 3", click to change); export buttons are grouped in an "Export" menu on ① and the secondary actions of ② in a "More" menu; the card titles that repeated the page name are gone; counters stay hidden until there is something to count; empty states use line icons.
+- Page layouts tidied: topic search keeps its fields on one row; lab pages use the same field / action rows as the other pages; the journal library shows its three steps as cards and its fields no longer overflow.
 - `i18n.js` no longer rewrites whole elements that contain an icon (it would have wiped the sidebar icons); their labels are translated on their own.
 - Tests: `tests/test_desktop.py` (fake pywebview: dialogs, filters, window state, close guard, single instance, server hooks) and `tests/web_shell_check.py` (headless Chrome: navigation, shortcuts, palette, theme, job monitor, drag and drop, language round trip, no horizontal overflow); both run in CI.
 
