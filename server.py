@@ -25,12 +25,13 @@ import urllib.request
 import uuid
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 import chem
 import browser
 import downloader
 import filing
+import taskstore
 import journalinfo
 import journals
 import netpolicy
@@ -1061,6 +1062,19 @@ class Handler(BaseHTTPRequestHandler):
 
         if p.startswith("/samples/"):
             return self._static(p[len("/samples/"):], SAMPLES)
+        if p == "/api/history":
+            kind = (parse_qs(urlparse(self.path).query).get("kind") or [""])[0]
+            try:
+                return self._json({"items": taskstore.listing(DATA, kind) if DATA else []})
+            except taskstore.StoreError as e:
+                return self._json({"error": str(e)}, 400)
+        if p == "/api/history/get":
+            q = parse_qs(urlparse(self.path).query)
+            try:
+                rec = taskstore.load(DATA, (q.get("kind") or [""])[0], (q.get("id") or [""])[0]) if DATA else None
+            except taskstore.StoreError as e:
+                return self._json({"error": str(e)}, 400)
+            return self._json(rec) if rec else self._json({"error": "not found"}, 404)
         if p.startswith("/api/last/"):
             kind = p.rsplit("/", 1)[-1]
             if kind not in ("lookup", "download"):
@@ -1083,7 +1097,6 @@ class Handler(BaseHTTPRequestHandler):
                            "cancelled": job["cancel"].is_set()}
             return self._json(payload)
         if p == "/api/chem/feed":
-            from urllib.parse import parse_qs
             q = parse_qs(qs)
             ids = [x for x in (q.get("journals", [""])[0] or "").split(",") if x]
             try:
@@ -1111,7 +1124,6 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/journal/presets":
             return self._json({"presets": journals.PRESETS})
         if p.startswith("/api/journal/search"):
-            from urllib.parse import parse_qs
             q = (parse_qs(qs).get("q", [""])[0] or "").strip()
             if not q:
                 return self._json({"error": "缺少 q"}, 400)
@@ -1120,7 +1132,6 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:  # noqa: BLE001
                 return self._json({"error": f"Crossref 不可用：{e}"}, 502)
         if p.startswith("/api/journal/latest"):
-            from urllib.parse import parse_qs
             q = parse_qs(qs)
             issn = (q.get("issn", [""])[0] or "").strip()
             if not issn:
@@ -1185,6 +1196,22 @@ class Handler(BaseHTTPRequestHandler):
             body = self._body()
         except ValueError as e:
             return self._json({"error": str(e)}, 413)
+
+        if p == "/api/history/save":
+            if not DATA:
+                return self._json({"error": "no data folder"}, 500)
+            try:
+                meta = taskstore.save(DATA, str(body.get("kind") or ""), body.get("id") or None,
+                                      body.get("title") or "", body.get("summary") or "", body.get("payload"))
+            except taskstore.StoreError as e:
+                return self._json({"error": str(e)}, 400)
+            return self._json(meta)
+        if p == "/api/history/delete":
+            try:
+                ok = taskstore.delete(DATA, str(body.get("kind") or ""), str(body.get("id") or "")) if DATA else False
+            except taskstore.StoreError as e:
+                return self._json({"error": str(e)}, 400)
+            return self._json({"ok": ok})
 
         if p == "/api/parse":
             entries = parse_entries(body.get("text", ""), body.get("mode", "auto"))

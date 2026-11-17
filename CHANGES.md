@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+**Saved tasks on every page**
+- Every page (lookup, download, search, ChemASAP, journal follow, ResearchGate, lab pages, journal library, preprints) now keeps a "History" list. Results are saved on this computer while they arrive (`taskstore.py`, `<data dir>/history/<page>/<id>.json`, newest 60 per page), so closing the app loses nothing. A saved task can be reopened later with its selection and its download panel, so the unfinished papers can be retried or filed.
+- The newest task of a page reopens by itself when the app starts on an empty page; "New task" starts a fresh record without clearing the page; records can be deleted.
+- New endpoints: `/api/history`, `/api/history/get`, `/api/history/save`, `/api/history/delete`.
+- Tests: `tests/test_taskstore.py`, `tests/web_history_check.py` (real server + headless Chrome).
+
+**ResearchGate**
+- The author list is read page by page from the server-rendered HTML (100 per page) instead of the half-rendered live page, so profiles with hundreds of papers are no longer cut off after a few dozen; the count the page states is compared with what was read and a shortfall is reported.
+
 **English interface and file pickers**
 - The English UI no longer leaves Chinese behind: a dictionary plus sentence rules (`web/i18n.en.js`) cover static text, tables, status lines, placeholders, titles and the page title; runtime text is translated by a MutationObserver, and the language can be switched back and forth without reloading. Text composed in JS (confirm dialogs, path preview, default folder names) follows the UI language.
 - Pause/resume no longer reads the button's label (it broke in English); it uses a state flag.

@@ -106,6 +106,112 @@ window.addEventListener("unhandledrejection", (e) => {
                   selected: { search: new Set(), chem: new Set() }, mode: "auto", job: null, lookupBusy: false, dlBusy: false,
                   baiduDoi: "", editRow: null, myOrcid: "", recentOrcids: [] };
 
+  // History (see makeHistory below): pages register an adapter, render functions call histTouch().
+  const HIST = {}, HADAPT = {}, _allPanels = {};
+  const histTouch = (k, now) => { if (HIST[k]) HIST[k].touch(now); };
+  const histBegin = (k) => { if (HIST[k]) HIST[k].begin(); };
+
+
+  /* ================================================================ history: every page keeps its tasks
+     Results are saved on this computer as they appear (taskstore.py), so closing the app or switching page
+     loses nothing, and an old task can be reopened to retry what failed or to file what was found. */
+  function makeHistory(kind, tabId, o) {
+    const H = { id: null, ready: false, restoring: false, timer: null, last: 0, list: [], saving: false };
+    const box = document.createElement("details");
+    box.className = "hist"; box.id = "hist-" + kind;
+    box.innerHTML = `<summary><span>历史记录</span><span class="hist-n"></span></summary>
+      <div class="hist-bar"><button class="btn sm" type="button" data-act="new">新建任务（不清空当前页面）</button>
+        <span class="aux">结果会自动保存在本机，关掉程序再打开也还在</span></div>
+      <div class="hist-list"></div>`;
+    const panel = document.getElementById("tab-" + tabId);
+    panel.insertBefore(box, panel.firstChild);
+    const listEl = box.querySelector(".hist-list"), nEl = box.querySelector(".hist-n");
+    const when = (ts) => { try { return new Date(ts * 1000).toLocaleString(locale(), { hour12: false }); } catch { return ""; } };
+
+    function draw() {
+      nEl.textContent = H.list.length ? " · " + H.list.length : "";
+      listEl.innerHTML = H.list.length ? H.list.map((r) => `<div class="hist-row ${r.id === H.id ? "cur" : ""}" data-id="${esc(r.id)}">
+          <div class="hist-main"><div class="hist-t">${esc(r.title || when(r.created))}</div>
+            <div class="aux">${esc(when(r.updated))}${r.summary ? " · " + esc(r.summary) : ""}</div></div>
+          <button class="btn sm" type="button" data-act="open">打开</button>
+          <button class="btn sm" type="button" data-act="del">删除</button></div>`).join("")
+        : `<div class="aux hist-empty">还没有历史记录</div>`;
+    }
+    async function refresh() {
+      try { H.list = (await api("/api/history?kind=" + kind)).items || []; } catch { H.list = []; }
+      draw();
+    }
+    async function save() {
+      if (H.saving) { H.timer = setTimeout(save, 800); return; }
+      let payload = null;
+      try { payload = o.capture(); } catch (e) { console.error("history capture", kind, e); }
+      if (!payload) return;
+      H.saving = true;
+      try {
+        const r = await api("/api/history/save", {
+          kind, id: H.id, title: (o.title && o.title()) || "", summary: (o.summary && o.summary()) || "", payload,
+        });
+        H.id = r.id; H.last = Date.now();
+        await refresh();
+      } catch (e) { console.error("history save", kind, e); } finally { H.saving = false; }
+    }
+    // saves are debounced; while a job is running they are also spaced out (the payload can be large)
+    H.touch = (now) => {
+      if (H.restoring || !H.ready) return;
+      clearTimeout(H.timer);
+      let wait = now ? 200 : 1500;
+      if (!now && o.busy && o.busy()) wait = Math.max(wait, 10000 - (Date.now() - H.last));
+      H.timer = setTimeout(save, Math.max(0, wait));
+    };
+    H.begin = () => { clearTimeout(H.timer); H.id = null; draw(); };
+    H.refresh = refresh;
+    box.addEventListener("click", async (e) => {
+      const b = e.target.closest("[data-act]");
+      if (!b) return;
+      if (b.dataset.act === "new") { H.begin(); toast(tr("下次的结果会存成一条新记录")); return; }
+      const id = (b.closest("[data-id]") || {}).dataset && b.closest("[data-id]").dataset.id;
+      if (!id) return;
+      if (b.dataset.act === "del") {
+        if (!confirm(tr("删除这条历史记录？删除后不能恢复。"))) return;
+        try { await api("/api/history/delete", { kind, id }); } catch (err) { return toast(err.message); }
+        if (H.id === id) H.id = null;
+        return refresh();
+      }
+      if (o.busy && o.busy()) return toast(tr("这一页正在运行，请先等它结束或点停止"));
+      try {
+        const rec = await api(`/api/history/get?kind=${kind}&id=${encodeURIComponent(id)}`);
+        clearTimeout(H.timer);
+        H.restoring = true;
+        try { o.restore(rec.payload || {}); } finally { setTimeout(() => { H.restoring = false; }, 50); }
+        H.id = id; draw();
+        toast(tr("已打开：") + (rec.title || when(rec.created)));
+      } catch (err) { toast(tr("打开失败：") + err.message); }
+    });
+    // the newest task of a page is reopened automatically when the app starts on an empty page
+    H.auto = async () => {
+      await refresh();
+      const first = H.list[0];
+      if (!first || !o.isEmpty || !o.isEmpty()) { H.ready = true; return; }
+      try {
+        const rec = await api(`/api/history/get?kind=${kind}&id=${encodeURIComponent(first.id)}`);
+        H.restoring = true;
+        try { o.restore(rec.payload || {}); } finally { setTimeout(() => { H.restoring = false; }, 50); }
+        H.id = first.id; draw();
+      } catch { /* keep the empty page */ }
+      setTimeout(() => { H.ready = true; }, 100);
+    };
+    HIST[kind] = H;
+    return H;
+  }
+  const panelSnap = (k) => (_allPanels[k] ? _allPanels[k].getState() : null);
+  const panelBack = (k, st, build) => { if (_allPanels[k]) _allPanels[k].setState(st, build); };
+  const countBy = (rows, f) => rows.filter(f).length;
+  const dlSummary = (rows) => {
+    const ok = countBy(rows, (r) => ["downloaded", "exists"].includes(r.status));
+    return rows.length ? `${rows.length} 条 · 已获取 ${ok} · 未获取 ${rows.length - ok}` : "";
+  };
+  const snip = (t, n) => { const x = String(t || "").replace(/\s+/g, " ").trim(); return x.length > n ? x.slice(0, n) + "…" : x; };
+
   function showTab(name) {
     state.tab = name;
     document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
@@ -208,6 +314,7 @@ window.addEventListener("unhandledrejection", (e) => {
   }
 
   function renderLookup() {
+    histTouch("lookup");
     lookupStats();
     const root = $("lookupRoot");
     if (!state.lookupRows.length) {
@@ -348,6 +455,7 @@ window.addEventListener("unhandledrejection", (e) => {
     const titles = parseTitles($("titles").value);
     if (!titles.length) { feedback("feedback", "请先输入至少一篇文献标题。", true); $("titles").focus(); return; }
     state.lookupBusy = true;
+    histBegin("lookup");
     $("start").disabled = true; $("stop").disabled = false; $("titles").disabled = true;
     $("runStatus").textContent = "正在检索…"; $("dot").className = "green-dot busy";
     state.lookupRows = [];
@@ -562,6 +670,7 @@ window.addEventListener("unhandledrejection", (e) => {
   }
 
   function renderDownloads() {
+    histTouch("download");
     if ($("onlyMissing")) $("onlyMissing").onchange = renderDownloads;
     downloadStats();
     const root = $("dlRoot");
@@ -646,6 +755,7 @@ window.addEventListener("unhandledrejection", (e) => {
   async function runDownload(dois, keep) {
     state.dlBusy = true;
     $("retryDownload").hidden = true;
+    histBegin("download");
     $("startDownload").disabled = true; $("stopDownload").disabled = false;
     $("pauseDownload").disabled = false; $("pauseDownload").textContent = "暂停"; state.dlPaused = false;
     $("dlStatus").textContent = "正在解析开放获取来源…";
@@ -891,6 +1001,7 @@ window.addEventListener("unhandledrejection", (e) => {
     if (!q && !$("qAuthor").value.trim() && !orcid) {
       feedback("searchFeedback", "请输入主题关键词、作者或 ORCID。", true); return;
     }
+    histBegin("search");
     $("runSearch").disabled = true;
     feedback("searchFeedback", "检索中…");
     try {
@@ -974,7 +1085,8 @@ window.addEventListener("unhandledrejection", (e) => {
     toast("已填入 ORCID，点「检索」即可列出其全部论文");
   });
 
-  function renderSearch() {    const rows = state.searchRows;
+  function renderSearch() {    histTouch("search");
+    const rows = state.searchRows;
     $("searchAll").disabled = $("searchNone").disabled = $("searchToDownload").disabled = !rows.length;
     const root = $("searchRoot");
     if (!rows.length) {
@@ -1017,6 +1129,7 @@ window.addEventListener("unhandledrejection", (e) => {
   $("chemQuery").addEventListener("keydown", (e) => { if (e.key === "Enter") loadChem(); });
 
   async function loadChem() {
+    histBegin("chem");
     $("chemLoad").disabled = true;
     feedback("chemFeedback", "正在从 ChemASAP 拉取最新文章…");
     try {
@@ -1035,6 +1148,7 @@ window.addEventListener("unhandledrejection", (e) => {
   }
 
   function renderChem() {
+    histTouch("chem");
     const rows = state.chemRows;
     $("chemToDownload").disabled = !rows.length;
     const root = $("chemRoot");
@@ -1284,7 +1398,8 @@ window.addEventListener("unhandledrejection", (e) => {
         </div>
         <div id="${P("Results")}"></div></details>`;
     const G = (n) => document.getElementById(P(n));
-    const S = { rows: new Map(), picked: [], busy: false, job: "", paused: false, dest: "", build: null };
+    const S = { rows: new Map(), picked: [], busy: false, job: "", paused: false, dest: "", build: null, spec: null };
+    const changed = (now) => { if (opts.onChange) opts.onChange(!!now, S.busy); };
     const OKS = ["downloaded", "exists"], NOOA = ["no_oa", "blocked"];
     const key = (d) => String(d).toLowerCase();
 
@@ -1358,6 +1473,7 @@ window.addEventListener("unhandledrejection", (e) => {
       buttons(true);
       render(total, null);
       G("Panel").scrollIntoView({ block: "nearest", behavior: "smooth" });
+      changed(true);
       try {
         const r = await api("/api/download", body);
         S.job = r.job_id;
@@ -1368,6 +1484,7 @@ window.addEventListener("unhandledrejection", (e) => {
         pollJob(r.job_id, (d) => {
           merge(d);
           render(total, d);
+          changed(false);
           if (d.state === "running") {
             G("RunTitle").textContent = d.paused ? "⏸ 已暂停（当前这篇结束后停住，点继续恢复）"
               : (isRetry ? "正在重试… " : "正在下载… ") + `${d.done || 0} / ${d.total || picked.length}`;
@@ -1392,12 +1509,14 @@ window.addEventListener("unhandledrejection", (e) => {
               : `✓ 下载完成：共 ${total} 篇，成功 ${t.ok}，无开放获取/需订阅 ${t.no}`;
           }
           if (opts.onDone) opts.onDone(S.rows, t);
+          changed(true);
         });
       } catch (e) {
         G("Panel").classList.add("bad");
         G("RunTitle").textContent = "✗ 没有开始：" + e.message + "。点右边的重试即可";
         render(total, null);
         buttons(false);
+        changed(true);
       }
     }
 
@@ -1506,10 +1625,33 @@ window.addEventListener("unhandledrejection", (e) => {
     G("OpenDir").addEventListener("click", () =>
       api("/api/open-folder", { path: S.dest || pageDir() }).catch((e) => toast(e.message)));
 
-    return {
+    const self = {
       get busy() { return S.busy; },
       get rows() { return S.rows; },
       dir: pageDir,
+      /** everything needed to show this panel again later and to retry what is missing */
+      getState() {
+        if (!S.picked.length && !S.rows.size) return null;
+        return { picked: S.picked, rows: [...S.rows.values()], dest: S.dest, spec: S.spec };
+      },
+      /** buildFromSpec(spec) -> build(subset); the default rebuilds the plain DOI body */
+      setState(st, buildFromSpec) {
+        if (S.busy) return;
+        if (!st || (!(st.picked || []).length && !(st.rows || []).length)) { self.reset(); return; }
+        S.picked = st.picked || [];
+        S.rows = new Map((st.rows || []).map((r) => [key(r.doi), r]));
+        S.dest = st.dest || ""; S.spec = st.spec || null;
+        S.build = buildFromSpec ? buildFromSpec(S.spec)
+          : (subset) => self.body(subset.map((x) => x.doi), S.spec && S.spec.extra);
+        G("Panel").hidden = false; G("Panel").classList.remove("done", "bad");
+        const total = S.picked.length || S.rows.size;
+        const t = render(total, null);
+        buttons(false);
+        G("Panel").classList.add(t.failed ? "bad" : "done");
+        G("RunTitle").textContent = t.failed
+          ? `已打开保存的下载记录：还有 ${t.failed} 篇没完成，点重试继续`
+          : `已打开保存的下载记录：共 ${total} 篇，成功 ${t.ok}，无开放获取/需订阅 ${t.no}`;
+      },
       /** {workspace, collection, structure} this page would file into right now */
       target,
       /** POST body for /api/download with THIS page's folder and channels */
@@ -1525,12 +1667,12 @@ window.addEventListener("unhandledrejection", (e) => {
         return b;
       },
       /** picked: [{doi, ...}] (duplicates dropped); build(subset) -> POST body for /api/download */
-      start(picked, build) {
+      start(picked, build, spec) {
         if (S.busy) return false;
         const seen = new Set();
         S.picked = picked.filter((x) => x && x.doi && !seen.has(key(x.doi)) && seen.add(key(x.doi)));
         if (!S.picked.length) return false;
-        S.rows = new Map(); S.build = build;
+        S.rows = new Map(); S.build = build; S.spec = spec || null;
         run(S.picked, false);
         return true;
       },
@@ -1556,11 +1698,14 @@ window.addEventListener("unhandledrejection", (e) => {
         G("BarFill").style.width = "100%";
         setBusy(false);
       },
-      reset() { if (S.busy) return; G("Panel").hidden = true; G("ResultsWrap").hidden = true; S.rows = new Map(); S.picked = []; },
+      reset() { if (S.busy) return; G("Panel").hidden = true; G("ResultsWrap").hidden = true; S.rows = new Map(); S.picked = []; S.spec = null; },
     };
+    _allPanels[prefix] = self;
+    return self;
   }
 
   const _dlPanels = {};
+  const HIST_OF = { lk: "lookup", sr: "search", cx: "chem", jf: "journal", rg: "rg", lb: "lab", jd: "journal_lib", pp: "preprint" };
   // What each page is collecting decides the first-level folder under the workspace and how it is divided.
   const hostOf = (u) => { try { return new URL(String(u).trim()).hostname.replace(/^www\./, ""); } catch { return ""; } };
   const rgName = (u) => { const m = String(u).match(/researchgate\.net\/profile\/([^/?#]+)/i);
@@ -1585,7 +1730,7 @@ window.addEventListener("unhandledrejection", (e) => {
       const slot = document.createElement("div");
       const host = anchor.closest(".result-head, .searchbar-actions, .journal-main-head, .row") || anchor.parentElement;
       host.parentNode.insertBefore(slot, host.nextSibling);
-      p = _dlPanels[key] = makeDlPanel(key, slot, { context: DL_CTX[key] });
+      p = _dlPanels[key] = makeDlPanel(key, slot, { context: DL_CTX[key], onChange: (now) => histTouch(HIST_OF[key], now) });
     }
     return p;
   }
@@ -1594,7 +1739,7 @@ window.addEventListener("unhandledrejection", (e) => {
     if (p.busy) { toast("这一页正在下载，请先等它结束或点停止"); return p; }
     const list = (dois || []).filter(Boolean);
     if (!list.length) { toast("没有可下载的 DOI"); return p; }
-    p.start(list.map((d) => ({ doi: d })), (subset) => p.body(subset.map((x) => x.doi), extra));
+    p.start(list.map((d) => ({ doi: d })), (subset) => p.body(subset.map((x) => x.doi), extra), { extra: extra || null });
     return p;
   }
 
@@ -1699,6 +1844,7 @@ window.addEventListener("unhandledrejection", (e) => {
   }
 
   function renderJournalItems() {
+    histTouch("journal");
     const sub = state.journals.find((j) => j.issn === state.journalCurrent);
     const seen = sub ? (sub.seen || "") : "";
     const onlyNew = $("jOnlyNew").checked;
@@ -1724,6 +1870,7 @@ window.addEventListener("unhandledrejection", (e) => {
 
   async function loadJournal(issn) {
     const sub = state.journals.find((j) => j.issn === issn);
+    if (state.journalCurrent !== issn) histBegin("journal");
     state.journalCurrent = issn;
     state.selected.journal.clear();
     renderJournals();
@@ -1858,6 +2005,7 @@ window.addEventListener("unhandledrejection", (e) => {
   state.selected.rg = new Set();
 
   function renderRg() {
+    histTouch("rg");
     const rows = state.rgRows;
     $("rgAll").disabled = $("rgNone").disabled = $("rgResolve").disabled = !rows.length;
     const root = $("rgRoot");
@@ -1894,6 +2042,7 @@ window.addEventListener("unhandledrejection", (e) => {
   $("rgFetch").addEventListener("click", async () => {
     const url = $("rgUrl").value.trim();
     if (!/^https?:\/\/(www\.)?researchgate\.net\//i.test(url)) return toast("请填 researchgate.net 的作者主页链接");
+    histBegin("rg");
     $("rgFetch").disabled = true;
     feedback("rgFeedback", "正在浏览器里打开并抓取…（若出现人机验证，请在弹出的窗口里点一下）");
     try {
@@ -1995,6 +2144,73 @@ window.addEventListener("unhandledrejection", (e) => {
     } finally { $("arPick").disabled = false; }
   });
 
+
+  /* ---- per-page history adapters ---- */
+  const selArr = (st) => [...st];
+  const hsetTitle = (rows, first) => snip(first || (rows[0] && (rows[0].title || rows[0].doi)) || "", 40);
+  makeHistory("lookup", "lookup", {
+    capture: () => state.lookupRows.length ? { rows: state.lookupRows, titles: $("titles").value, panel: panelSnap("lk") } : null,
+    title: () => hsetTitle(state.lookupRows, (state.lookupRows[0] || {}).input || (state.lookupRows[0] || {}).title) + ` 等 ${state.lookupRows.length} 篇`,
+    summary: () => { const f = countBy(state.lookupRows, (r) => r.doi); return `共 ${state.lookupRows.length} 篇 · 找到 DOI ${f}`; },
+    isEmpty: () => !state.lookupRows.length && !$("titles").value.trim(),
+    busy: () => state.lookupBusy,
+    restore: (p) => { state.lookupRows = p.rows || []; if (p.titles != null) { $("titles").value = p.titles; countInput(); }
+      renderLookup(); panelBack("lk", p.panel); },
+  });
+  makeHistory("download", "download", {
+    capture: () => state.downloadRows.length ? { rows: state.downloadRows, dest: $("dlDir") ? $("dlDir").value : "" } : null,
+    title: () => `下载 ${state.downloadRows.length} 篇：` + hsetTitle(state.downloadRows, (state.downloadRows[0] || {}).doi),
+    summary: () => dlSummary(state.downloadRows),
+    isEmpty: () => !state.downloadRows.length,
+    busy: () => state.dlBusy,
+    restore: (p) => { state.downloadRows = p.rows || []; if (p.dest && $("dlDir")) $("dlDir").value = p.dest; renderDownloads(); },
+  });
+  makeHistory("search", "search", {
+    capture: () => state.searchRows.length ? { rows: state.searchRows, sel: selArr(state.selected.search),
+      q: $("q").value, author: $("qAuthor").value, orcid: $("qOrcid").value, panel: panelSnap("sr") } : null,
+    title: () => [snip($("q").value || $("qAuthor").value || $("qOrcid").value || "检索", 40), `${state.searchRows.length} 篇`].join(" · "),
+    summary: () => `共 ${state.searchRows.length} 条`,
+    isEmpty: () => !state.searchRows.length,
+    restore: (p) => { state.searchRows = p.rows || []; state.selected.search = new Set(p.sel || []);
+      $("q").value = p.q || ""; $("qAuthor").value = p.author || ""; $("qOrcid").value = p.orcid || "";
+      renderSearch(); panelBack("sr", p.panel); },
+  });
+  makeHistory("chem", "chem", {
+    capture: () => state.chemRows.length ? { rows: state.chemRows, sel: selArr(state.selected.chem), q: $("chemQuery").value, panel: panelSnap("cx") } : null,
+    title: () => ["ChemASAP" + ($("chemQuery").value ? ": " + snip($("chemQuery").value, 30) : ""), `${state.chemRows.length} 篇`].join(" · "),
+    summary: () => `共 ${state.chemRows.length} 条`,
+    isEmpty: () => !state.chemRows.length,
+    restore: (p) => { state.chemRows = p.rows || []; state.selected.chem = new Set(p.sel || []);
+      $("chemQuery").value = p.q || ""; renderChem(); panelBack("cx", p.panel); },
+  });
+  makeHistory("journal", "journal", {
+    capture: () => state.journalItems.length ? { items: state.journalItems, issn: state.journalCurrent,
+      title: $("jTitle").textContent, sel: selArr(state.selected.journal), panel: panelSnap("jf") } : null,
+    title: () => [snip($("jTitle").textContent || state.journalCurrent, 40), `${state.journalItems.length} 篇`].join(" · "),
+    summary: () => `共 ${state.journalItems.length} 条`,
+    isEmpty: () => !state.journalItems.length,
+    restore: (p) => { state.journalCurrent = p.issn || ""; state.journalItems = p.items || [];
+      state.selected.journal = new Set(p.sel || []); if (p.title) $("jTitle").textContent = p.title;
+      renderJournals(); renderJournalItems(); panelBack("jf", p.panel); },
+  });
+  makeHistory("rg", "rg", {
+    capture: () => state.rgRows.length ? { rows: state.rgRows, sel: selArr(state.selected.rg), url: $("rgUrl").value, panel: panelSnap("rg") } : null,
+    title: () => [rgName($("rgUrl").value) || "ResearchGate", `${state.rgRows.length} 篇`].join(" · "),
+    summary: () => `共 ${state.rgRows.length} 条 · 已有 DOI ${countBy(state.rgRows, (r) => r.doi)}`,
+    isEmpty: () => !state.rgRows.length,
+    restore: (p) => { state.rgRows = p.rows || []; state.selected.rg = new Set(p.sel || []); $("rgUrl").value = p.url || "";
+      renderRg(); panelBack("rg", p.panel); },
+  });
+  makeHistory("lab", "lab", {
+    capture: () => state.labRows.length ? { rows: state.labRows, sel: [...state.labSel], url: $("labUrl").value, panel: panelSnap("lb") } : null,
+    title: () => [snip($("labUrl").value, 44), `${state.labRows.length} 篇`].join(" · "),
+    summary: () => `共 ${state.labRows.length} 条`,
+    isEmpty: () => !state.labRows.length,
+    restore: (p) => { state.labRows = p.rows || []; state.labSel = new Set(p.sel || []); $("labUrl").value = p.url || "";
+      renderLab(); panelBack("lb", p.panel); },
+  });
+  Object.keys(HIST).forEach((k) => HIST[k].refresh());
+
   countInput();
   countDois();
   renderLookup();
@@ -2002,6 +2218,7 @@ window.addEventListener("unhandledrejection", (e) => {
   (async () => {
     await loadSettings();
     await restoreLast();
+    for (const k of Object.keys(HIST)) { await HIST[k].auto(); }
   })();
 
   const hash = (location.hash || "").replace("#", "");
@@ -2038,6 +2255,7 @@ window.addEventListener("unhandledrejection", (e) => {
   state.labSel = new Set();
 
   function renderLab() {
+    histTouch("lab");
     const root = $("labRoot");
     if (!root) return;
     if (!state.labRows.length) { root.innerHTML = ""; return; }
@@ -2062,6 +2280,7 @@ window.addEventListener("unhandledrejection", (e) => {
     $("labFetch").addEventListener("click", async () => {
       const url = $("labUrl").value.trim();
       if (!url) { feedback("labFeedback", "先填页面地址", true); return; }
+      histBegin("lab");
       $("labFetch").disabled = true;
       feedback("labFeedback", "已提交，正在用浏览器打开并逐轮加载…可能需要一两分钟");
       try {
@@ -2146,7 +2365,7 @@ window.addEventListener("unhandledrejection", (e) => {
     const slot = document.createElement("div");
     const bar = $("ppDownload").closest(".searchbar-actions");
     bar.parentNode.insertBefore(slot, bar.nextSibling);
-    const dl = makeDlPanel("pp", slot, { onBusy: () => refresh(), context: DL_CTX.pp });
+    const dl = makeDlPanel("pp", slot, { onBusy: () => refresh(), context: DL_CTX.pp, onChange: (now) => histTouch("preprint", now) });
 
     const failedIdx = () => PP.rows.map((r, i) => (["error", "stopped"].includes(r.status) ? i : -1)).filter((i) => i >= 0);
     const setFb = (msg, bad) => feedback("ppFeedback", msg, !!bad);
@@ -2167,6 +2386,7 @@ window.addEventListener("unhandledrejection", (e) => {
     }
 
     function render() {
+      histTouch("preprint");
       if (!PP.rows.length) { refresh(); return; }
       root.innerHTML = PP.rows.map((r, i) => {
         const st = ST[r.status] || [r.status, "pending"];
@@ -2208,11 +2428,21 @@ window.addEventListener("unhandledrejection", (e) => {
       render();
     });
     $("ppNone").addEventListener("click", () => { PP.sel = new Set(); render(); });
+    makeHistory("preprint", "preprint", {
+      capture: () => PP.rows.length ? { rows: PP.rows, sel: [...PP.sel], input: $("ppInput").value, panel: dl.getState() } : null,
+      title: () => snip($("ppInput").value.split("\n")[0] || "预印本", 40) + ` 等 ${PP.rows.length} 条`,
+      summary: () => `共 ${PP.rows.length} 条 · 找到 ${countBy(PP.rows, (r) => r.status === "found")}`,
+      isEmpty: () => !PP.rows.length,
+      busy: () => dl.busy,
+      restore: (p) => { PP.rows = p.rows || []; PP.sel = new Set(p.sel || []); $("ppInput").value = p.input || "";
+        render(); dl.setState(p.panel); },
+    });
+    HIST.preprint.auto();
 
     // lines: what to send; idx: null for a fresh search, else the row positions being retried
     async function runFind(lines, idx) {
       const isRetry = !!idx;
-      if (!isRetry) { PP.rows = []; PP.sel = new Set(); render(); dl.reset(); }
+      if (!isRetry) { histBegin("preprint"); PP.rows = []; PP.sel = new Set(); render(); dl.reset(); }
       dl.beginTask(isRetry ? `正在重试 ${lines.length} 条…` : `正在查找预印本（共 ${lines.length} 条）…`);
       setFb("");
       const end = (title, bad) => { dl.endTask(title, bad); render(); };
@@ -2294,6 +2524,7 @@ window.addEventListener("unhandledrejection", (e) => {
       job: "",
     };
     const jdDl = makeDlPanel("jd", document.getElementById("jdSlot"), {
+      onChange: (now) => histTouch("journal_lib", now),
       onBusy: (on) => { document.getElementById("jdDownload").disabled = on; },
       context: () => ({ name: st.journal || (st.rows[0] && st.rows[0].journal) || (G("jdIssn").value || "").trim() || tr("期刊文库"),
                         structure: "volume_issue" }),
@@ -2387,11 +2618,32 @@ window.addEventListener("unhandledrejection", (e) => {
       if (sel === "noncorr") return k !== "non-research";
       return true;
     }
+    const jdBuild = (jr, mt) => (subset) => jdDl.body(subset.map((x) => x.doi), {
+      layout: {
+        journal: jr,
+        items: subset.map((x) => { const m = mt.get(String(x.doi).toLowerCase()) || x;
+          return { doi: m.doi, year: m.year, volume: m.volume, issue: m.issue }; }),
+      },
+    });
+    makeHistory("journal_lib", "journaldl", {
+      capture: () => st.rows.length ? { rows: st.rows, sel: [...st.sel], journal: st.journal, issn: st.issn,
+        input: document.getElementById("jdIssn").value, panel: jdDl.getState() } : null,
+      title: () => [snip(st.journal || document.getElementById("jdIssn").value, 44), `${st.rows.length} 篇`].join(" · "),
+      summary: () => `共 ${st.rows.length} 篇`,
+      isEmpty: () => !st.rows.length,
+      busy: () => jdDl.busy,
+      restore: (p) => { st.rows = p.rows || []; st.sel = new Set(p.sel || []); st.journal = p.journal || ""; st.issn = p.issn || "";
+        document.getElementById("jdIssn").value = p.input || "";
+        drawList();
+        jdDl.setState(p.panel, (spec) => jdBuild(spec.journal, new Map((spec.meta || []).map((m) => [String(m.doi).toLowerCase(), m])))); },
+    });
+    HIST.journal_lib.auto();
     function selectByKind() {
       st.sel = new Set(st.rows.map((r, i) => (kindMatches(r) ? i : -1)).filter((i) => i >= 0));
     }
 
     function drawList() {
+      histTouch("journal_lib");
       const box = document.getElementById("jdList");
       const bar = document.getElementById("jdBar");
       if (!st.rows.length) { box.innerHTML = ""; if (bar) bar.hidden = true; return; }
@@ -2444,6 +2696,7 @@ window.addEventListener("unhandledrejection", (e) => {
       const box = document.getElementById("jdList");
       box.innerHTML = `<div class="empty"><div class="empty-symbol">…</div><strong>正在抓取书目</strong>
         <p>逐年翻页，过程中列表会一段段出现。</p></div>`;
+      histBegin("journal_lib");
       jdDl.beginTask("正在抓取书目…");
       api("/api/journal/harvest", { issn, year_from: from, year_to: to }).then((r) => {
         st.job = r.job_id; jdDl.setJob(r.job_id);
@@ -2497,13 +2750,7 @@ window.addEventListener("unhandledrejection", (e) => {
       setFb("");
       const journal = st.journal || (st.rows[0] && st.rows[0].journal) || (G("jdIssn").value || "").trim();
       const meta = new Map(picked.map((x) => [String(x.doi).toLowerCase(), x]));
-      jdDl.start(picked, (subset) => jdDl.body(subset.map((x) => x.doi), {
-        layout: {
-          journal,
-          items: subset.map((x) => { const m = meta.get(String(x.doi).toLowerCase()) || x;
-            return { doi: m.doi, year: m.year, volume: m.volume, issue: m.issue }; }),
-        },
-      }));
+      jdDl.start(picked, jdBuild(journal, meta), { journal, meta: picked.map((x) => ({ doi: x.doi, year: x.year, volume: x.volume, issue: x.issue })) });
     });
   })();
 
