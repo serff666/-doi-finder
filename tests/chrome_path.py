@@ -6,6 +6,8 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
+import time
 import types
 
 # These checks print Chinese (page text, failure details). On Windows a piped stdout uses the ANSI code
@@ -41,30 +43,55 @@ def _decode(b) -> str:
     return (b or b"").decode("utf-8", "replace")
 
 
-def _run(cmd, timeout):
-    """(stdout, stderr, finished) — never raises on timeout, never hangs on pipes left open by children."""
+def _run(cmd, timeout, until: bytes = b""):
+    """(stdout, stderr, finished). Returns as soon as `until` has been printed, then ends Chrome itself:
+    on the Windows runners Chrome prints the whole DOM and then keeps running (background tasks such as
+    an RLZ ping), so waiting for it to exit never ends. Never hangs on pipes held by child processes."""
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    try:
-        out, err = p.communicate(timeout=timeout)
-        return _decode(out), _decode(err), True
-    except subprocess.TimeoutExpired:
+    bufs = {"out": bytearray(), "err": bytearray()}
+
+    def pump(src, key):
+        fd = src.fileno()
+        while True:
+            try:
+                chunk = os.read(fd, 65536)
+            except OSError:
+                return
+            if not chunk:
+                return
+            bufs[key] += chunk
+
+    readers = [threading.Thread(target=pump, args=(p.stdout, "out"), daemon=True),
+               threading.Thread(target=pump, args=(p.stderr, "err"), daemon=True)]
+    for t in readers:
+        t.start()
+    deadline = time.monotonic() + timeout
+    finished = False
+    while time.monotonic() < deadline:
+        if p.poll() is not None:
+            finished = True
+            break
+        if until and until in bufs["out"]:
+            finished = True
+            time.sleep(0.5)                      # let the last bytes arrive
+            break
+        time.sleep(0.1)
+    if p.poll() is None:
         p.kill()
-        try:
-            out, err = p.communicate(timeout=15)
-        except subprocess.TimeoutExpired:   # a child process still holds the pipes
-            out, err = b"", b"(no output: pipes still held by a Chrome child process)"
-        return _decode(out), _decode(err), False
+    for t in readers:
+        t.join(timeout=2)
+    return _decode(bytes(bufs["out"])), _decode(bytes(bufs["err"])), finished
 
 
 def run_chrome(cmd: list, timeout: float):
     """Run headless Chrome for --dump-dom. On a timeout, fail with a diagnosis instead of a bare
     TimeoutExpired: Chrome's own log, the partial output, and whether a trivial page works at all."""
     cmd = list(cmd[:1]) + ["--enable-logging=stderr", "--v=0"] + list(cmd[1:])
-    out, err, done = _run(cmd, timeout)
+    out, err, done = _run(cmd, timeout, until=b"</html>")
     if done:
         return types.SimpleNamespace(stdout=out, stderr=err)
     probe_out, probe_err, probe_done = _run([cmd[0], "--headless=new", "--no-sandbox", "--disable-gpu",
-                                             "--dump-dom", "data:text/html,<p id=probe>ok</p>"], 45)
+                                             "--dump-dom", "data:text/html,<p id=probe>ok</p>"], 45, until=b"</html>")
     probe = ("a trivial page works (" + ("dump ok" if "probe" in probe_out else "no DOM: " + probe_err[-300:]) + ")"
              if probe_done else "even a trivial page times out: Chrome headless itself is stuck here")
     raise SystemExit(f"Chrome did not finish within {timeout:.0f} s; {probe}.\n"
