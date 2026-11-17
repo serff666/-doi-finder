@@ -15,6 +15,11 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 
+# Callers run Chrome WITHOUT --user-data-dir: headless Chrome then uses its own throwaway profile.
+# A fresh --user-data-dir makes Chrome do first-run work (component updates, network probes) that hung
+# --dump-dom until the timeout on the Windows runners and in sandboxed containers.
+
+
 def find_chrome() -> str:
     for name in ("google-chrome", "chromium", "chromium-browser", "chrome"):
         hit = shutil.which(name)

@@ -46,7 +46,7 @@ def run() -> int:
         ok = a.get("id") and len(get(base, "/api/history?kind=lab")["items"]) == 1
         print(("ok   " if ok else "FAIL ") + "API saves and lists a record"); bad += 0 if ok else 1
 
-        r = subprocess.run([chrome, "--headless=new", "--no-sandbox", "--disable-gpu", "--lang=zh-CN", f"--user-data-dir={prof}",
+        r = subprocess.run([chrome, "--headless=new", "--no-sandbox", "--disable-gpu", "--lang=zh-CN",
                             "--virtual-time-budget=20000", "--dump-dom", base + "/#lab"], capture_output=True, encoding="utf-8", errors="replace", timeout=90)
         dom = r.stdout
         res = {

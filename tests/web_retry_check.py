@@ -317,7 +317,7 @@ def run() -> int:
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     prof = tempfile.mkdtemp()
     try:
-        r = subprocess.run([chrome, "--headless=new", "--no-sandbox", "--disable-gpu", "--lang=zh-CN", f"--user-data-dir={prof}",
+        r = subprocess.run([chrome, "--headless=new", "--no-sandbox", "--disable-gpu", "--lang=zh-CN",
                             "--virtual-time-budget=60000", "--dump-dom", f"http://127.0.0.1:{srv.server_port}/"],
                            capture_output=True, encoding="utf-8", errors="replace", timeout=120)
     finally:

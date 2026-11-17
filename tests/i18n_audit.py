@@ -169,7 +169,7 @@ def run_chrome(probes):
     with tempfile.TemporaryDirectory() as td:
         page = os.path.join(td, "p.html")       # scripts are inlined: no file:// loading, works on any runner
         open(page, "w", encoding="utf-8").write(PAGE % (read("i18n.en.js"), read("i18n.js"), json.dumps(probes, ensure_ascii=False)))
-        r = subprocess.run([chrome, "--headless=new", "--no-sandbox", "--disable-gpu", "--user-data-dir=" + os.path.join(td, "prof"),
+        r = subprocess.run([chrome, "--headless=new", "--no-sandbox", "--disable-gpu",
                             "--virtual-time-budget=10000", "--dump-dom", "file://" + page],
                            capture_output=True, encoding="utf-8", errors="replace", timeout=120)
     m = re.search(r'<pre id="result">(.*?)</pre>', r.stdout, re.S)
