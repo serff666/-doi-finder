@@ -5,6 +5,8 @@ re-displays the saved rows.  Skipped when Chrome is not installed.  Run:  python
 """
 import html as _h
 import json, os, re, shutil, subprocess, sys, tempfile, time, urllib.request
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from chrome_path import find_chrome, run_chrome  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PIN_ZH = "df_lang"
@@ -20,7 +22,7 @@ def get(base, path):
 
 
 def run() -> int:
-    chrome = shutil.which("google-chrome") or shutil.which("chromium") or shutil.which("chromium-browser")
+    chrome = find_chrome()
     if not chrome:
         print("SKIP: no Chrome"); return 0
     data = tempfile.mkdtemp(); prof = tempfile.mkdtemp()
@@ -44,8 +46,8 @@ def run() -> int:
         ok = a.get("id") and len(get(base, "/api/history?kind=lab")["items"]) == 1
         print(("ok   " if ok else "FAIL ") + "API saves and lists a record"); bad += 0 if ok else 1
 
-        r = subprocess.run([chrome, "--headless=new", "--no-sandbox", "--disable-gpu", "--lang=zh-CN", f"--user-data-dir={prof}",
-                            "--virtual-time-budget=20000", "--dump-dom", base + "/#lab"], capture_output=True, text=True, timeout=90)
+        r = run_chrome([chrome, "--headless=new", "--no-sandbox", "--disable-gpu", "--lang=zh-CN",
+                            "--virtual-time-budget=20000", "--dump-dom", base + "/#lab"], timeout=90)
         dom = r.stdout
         res = {
             "hist": {k: len(re.findall(r'<div class="hist-row', (re.search(r'id="hist-%s".*?</details>' % k, dom, re.S) or [""])[0]))

@@ -1,6 +1,7 @@
 # Runtime (beyond the standard library)
 openpyxl>=3.1     # Excel export
 pypdf>=4.0        # read text from PDFs (archive title/year guess)
+pywebview>=5.0    # desktop window (desktop.py); without it the UI opens in Chrome/Edge or the browser
 
 # Optional: packaging
 pyinstaller>=6.0

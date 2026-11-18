@@ -2,11 +2,11 @@
 
 
 a = Analysis(
-    ['server.py'],
+    ['desktop.py'],
     pathex=[],
     binaries=[],
-    datas=[('web', 'web')],
-    hiddenimports=['pypdf', 'openpyxl'],
+    datas=[('web', 'web'), ('assets/icon.png', 'assets')],
+    hiddenimports=['pypdf', 'openpyxl', 'server', 'webview'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

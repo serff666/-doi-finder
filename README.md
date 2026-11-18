@@ -34,13 +34,14 @@
 
 ## 2. 安装与启动
 
-**Windows 安装包**（发布页的 `DOI-Finder-Setup-<版本>.exe`）：单文件安装程序，默认装到 `%LOCALAPPDATA%\Programs\DOI Finder`，不需要管理员权限，可在控制面板卸载。安装包没有代码签名，Windows SmartScreen 可能提示，选择「更多信息 → 仍要运行」。启动后程序会用本机的 Chrome 或 Edge 打开一个独立的应用窗口；本机没有这两种浏览器时，改用系统默认浏览器。
+**Windows 安装包**（发布页的 `DOI-Finder-Setup-<版本>.exe`）：单文件安装程序，默认装到 `%LOCALAPPDATA%\Programs\DOI Finder`，不需要管理员权限，可在控制面板卸载。安装包没有代码签名，Windows SmartScreen 可能提示，选择「更多信息 → 仍要运行」。它是一个桌面应用：有自己的窗口（系统自带的 WebView2）、自己的任务栏图标、系统原生的文件对话框，没有地址栏。再次启动时会把已经打开的窗口调到前面，而不是再开一个。
 
 **从源码运行**（需要 Python 3.11 或更高）：
 
 ```bat
 :: Windows
-python server.py --open            :: --open 表示启动后打开界面；run_server.cmd 等价于此
+pip install -r requirements.txt
+python desktop.py                  :: 桌面窗口；run_server.cmd 等价于此
 ```
 
 ```bash
@@ -48,10 +49,11 @@ python server.py --open            :: --open 表示启动后打开界面；run_s
 ./run.sh                           # 第一次运行会在项目目录创建 .venv 并安装依赖
 ```
 
-- 服务只监听 `127.0.0.1`，默认端口 8765；被占用时依次尝试后面的端口（最多 40 个）。用环境变量 `DOIFINDER_PORT` 可指定端口，`DOIFINDER_NO_BROWSER=1` 可禁止自动打开界面。程序没有 `--port` 参数。
-- 界面里点右上角「退出」会停止服务。
-- 可选依赖（`requirements.txt`）：`openpyxl`（导出 Excel）、`pypdf`（归档时从 PDF 首页猜标题和年份）。没有它们，对应功能不可用，其余功能不受影响。
-- 文件夹 / 文件选择对话框使用 Python 自带的 tkinter，没有备用实现。tkinter 不可用时，点「选择…」会报错，此时直接在输入框里填路径。
+- **桌面窗口**（`desktop.py`）基于 [pywebview](https://pywebview.flowrl.com/)：Windows 上用 WebView2（Windows 10/11 自带），macOS 用 WebKit，Linux 用 GTK 或 Qt（见 [README.linux.md](README.linux.md)）。没装 pywebview、或没有可用的图形后端时，同一个界面改在 Chrome / Edge 的应用窗口或默认浏览器里打开（`python server.py --open` 直接就是这种方式）。
+- 关闭窗口即退出程序；还有任务在运行时会先询问（已下载的文件和历史记录都会保留）。窗口大小和位置会记住。
+- 服务只监听 `127.0.0.1`，默认端口 8765；被占用时依次尝试后面的端口（最多 40 个）。用环境变量 `DOIFINDER_PORT` 可指定端口，`DOIFINDER_NO_BROWSER=1` 只运行服务、不开窗口。程序没有 `--port` 参数。
+- 可选依赖（`requirements.txt`）：`openpyxl`（导出 Excel）、`pypdf`（归档时从 PDF 首页猜标题和年份）、`pywebview`（桌面窗口）。没有它们，对应功能不可用，其余功能不受影响。
+- 桌面窗口里的文件 / 文件夹选择和「另存为」都是系统原生对话框。浏览器方式下，选择器用 Python 自带的 tkinter，导出文件走浏览器下载；tkinter 不可用时直接在输入框里填路径。
 - 机构通道和部分下载步骤需要本机装有 Chrome 或 Edge。
 
 **验证情况**：自动化测试（单元测试、期刊端到端流程、浏览器端界面检查）在 GitHub Actions 的 Windows 和 Ubuntu、Python 3.11 / 3.13 上运行。真实出版社流量、机构登录、各第三方来源的可用性，没有自动化覆盖，只能靠实际使用验证；Linux 只在源码层面测过，macOS 没有测试。
@@ -62,12 +64,20 @@ python server.py --open            :: --open 表示启动后打开界面；run_s
 
 | 位置 | 内容 | 说明 |
 |---|---|---|
-| 顶部「工作区」 | 一个根文件夹，例如 `D:\文献` | 所有页面下载的文件都放在它下面。默认是 `~/Downloads/DOI Finder`（Windows 下即 `C:\Users\<你>\Downloads\DOI Finder`） |
-| 设置里的「联系邮箱」 | 你自己的邮箱 | 会随请求发给 Crossref、OpenAlex、Unpaywall 等服务（这些服务对带邮箱的请求限流更宽松）。可以不填，但被限流（HTTP 429）的概率更高 |
+| 顶栏「工作区」 | 一个根文件夹，例如 `D:\文献` | 所有页面下载的文件都放在它下面。默认是 `~/Downloads/DOI Finder`（Windows 下即 `C:\Users\<你>\Downloads\DOI Finder`） |
+| 「设置」页的「联系邮箱」 | 你自己的邮箱 | 会随请求发给 Crossref、OpenAlex、Unpaywall 等服务（这些服务对带邮箱的请求限流更宽松）。可以不填，但被限流（HTTP 429）的概率更高 |
 
 之后的典型流程：在「① 标题 → DOI」粘贴标题，点「开始批量检索」，核对状态；再点「→ 下载这些 PDF」，在本页看进度；下载完成后点「打开下载目录」。
 
-## 4. 页面一览
+## 4. 界面
+
+窗口左边是**侧栏**，页面按用途分组（查找文献 · 获取全文 · 持续跟踪 · 整理），最下面是**设置**；上面是**顶栏**，显示当前页面和工作区文件夹；底部是**状态栏**，显示连接状态、正在运行的任务和进度（窗口标题也会显示百分比，在任务栏上就能看到）。
+
+- **命令面板**（`Ctrl+K`，或顶栏的搜索框）：输入页面或操作名称的一部分，例如「下载」「设置」「深色」「pdf」，回车执行。
+- **快捷键**：`Ctrl+1` … `Ctrl+0` 打开 ① … ⑩ 页；`Ctrl+,` 打开设置；`Ctrl+Enter` 开始当前页的主要操作；`Ctrl+S` 保存设置。侧栏可收起为图标（底部按钮）。
+- **浅色 / 深色**：默认跟随系统，可在设置页或侧栏的月亮按钮切换。
+- **拖放**：把 `.txt` / `.md` / `.csv` / `.bib` / `.ris` 文件拖到 ①、② 或 ⑩ 页，内容会追加到输入框。桌面窗口里，把 PDF 拖进窗口任意位置，会直接按 ⑦ 归档的规则放进工作区。
+- **通知**：任务在窗口不在前台时完成，会弹出系统通知（可在设置页关闭）。
 
 | 页面 | 输入 | 输出 |
 |---|---|---|
@@ -208,7 +218,7 @@ python server.py --open            :: --open 表示启动后打开界面；run_s
 
 ## 8. 设置与密钥
 
-设置保存在 `%LOCALAPPDATA%\DOIFinder\settings.json`（Linux：`~/.local/share/DOIFinder`）。仓库里的 `settings.example.json` 是字段示例，不含任何密钥。
+下表的设置都在**设置**页（侧栏最下面，或 `Ctrl+,`），对每一页都生效；工作区在顶栏修改，会自动保存。设置保存在 `%LOCALAPPDATA%\DOIFinder\settings.json`（Linux：`~/.local/share/DOIFinder`）。仓库里的 `settings.example.json` 是字段示例，不含任何密钥。
 
 | 设置 | 默认 | 说明 |
 |---|---|---|
@@ -255,15 +265,16 @@ Elsevier key 与 Wiley token 是发给个人账号的，**不要共享**。
 
 **一直卡在某一篇**：单篇有 240 秒预算，机构浏览器单次等待上限默认 75 秒（设置 `inst_timeout`，5–300 秒）。可先「暂停」，处理完别的再「继续」。
 
-**对话框没有弹出 / 弹出后不在最前**：见 §2，选择器只用 tkinter；报错时直接在输入框里填路径。
+**对话框没有弹出 / 弹出后不在最前**：桌面窗口里的对话框属于窗口本身；浏览器方式下用的是 tkinter（见 §2），报错时直接在输入框里填路径。
 
 **日志**：`%LOCALAPPDATA%\DOIFinder\doifinder.log`（超过 1 MB 轮转）。每批下载结束会逐条记录未下到的文献和原因（以 `miss` 开头的行）。
 
-**界面点按钮没反应**：右上角状态栏会显示脚本错误和行号；Ctrl+F5 刷新通常可解决。
+**界面点按钮没反应**：底部状态栏会显示脚本错误和行号；点状态栏的「刷新界面」（或 Ctrl+F5）通常可解决。
 
 ## 12. 目录结构
 
 ```
+desktop.py        桌面应用：原生窗口、对话框、关闭前确认、单实例
 server.py         本地 HTTP 服务、任务调度、设置
 doi_engine.py     标题 → DOI：Crossref / OpenAlex 查询与打分
 validation.py     参考文献字段核对

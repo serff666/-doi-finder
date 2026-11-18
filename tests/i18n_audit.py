@@ -10,7 +10,9 @@ language set to English, and lists what does not come out in English.
 
 Skipped (exit 0) when Chrome is not installed.
 """
-import json, os, re, shutil, subprocess, sys, tempfile
+import json, os, re, sys, tempfile
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from chrome_path import find_chrome, run_chrome as dump_dom  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.path.join(ROOT, "web")
@@ -160,16 +162,15 @@ window.addEventListener("load", () => setTimeout(() => {     // after i18n.js ha
 
 
 def run_chrome(probes):
-    chrome = shutil.which("google-chrome") or shutil.which("chromium") or shutil.which("chromium-browser")
+    chrome = find_chrome()
     if not chrome:
         return None
     read = lambda n: open(os.path.join(WEB, n), encoding="utf-8").read().replace("</script", "<\\/script")
     with tempfile.TemporaryDirectory() as td:
         page = os.path.join(td, "p.html")       # scripts are inlined: no file:// loading, works on any runner
         open(page, "w", encoding="utf-8").write(PAGE % (read("i18n.en.js"), read("i18n.js"), json.dumps(probes, ensure_ascii=False)))
-        r = subprocess.run([chrome, "--headless=new", "--no-sandbox", "--disable-gpu", "--user-data-dir=" + os.path.join(td, "prof"),
-                            "--virtual-time-budget=10000", "--dump-dom", "file://" + page],
-                           capture_output=True, text=True, timeout=120)
+        r = dump_dom([chrome, "--headless=new", "--no-sandbox", "--disable-gpu",
+                            "--virtual-time-budget=10000", "--dump-dom", "file://" + page], timeout=120)
     m = re.search(r'<pre id="result">(.*?)</pre>', r.stdout, re.S)
     if not m:
         raise SystemExit("could not read the result from Chrome:\n" + r.stdout[:600] + r.stderr[-300:])

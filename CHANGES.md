@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+**A desktop app instead of a web page**
+- `desktop.py` (the Windows build starts here too) shows the interface in its own native window through pywebview — WebView2 on Windows, WebKit on macOS, GTK/Qt on Linux — with its own taskbar entry and no address bar. The server runs inside the app and stops when the window closes.
+- Native dialogs on the window: file / folder pickers (`platform_util.set_picker`, replacing tkinter there) and "Save as" for every export (`window.pywebview.api.save_file`).
+- Closing while a job runs asks first; size and position are remembered (`<data dir>/window.json`); a second launch brings the open window forward (`POST /api/app/focus`) instead of starting another server; "Quit" closes the window.
+- PDFs dropped onto the window arrive with their real paths and are filed by the Archive rules.
+- Without pywebview or a GUI backend it falls back to the old behaviour (Chrome/Edge app window or the default browser). `DOIFINDER_NO_BROWSER=1` runs only the server.
+
+**A new interface**
+- App layout: a sidebar with the pages grouped by job (find · get full text · follow · organize), a top bar with the page name and the workspace, a status bar with the connection state and the running job. Nothing was renamed: every id the code and tests use is unchanged.
+- A **Settings** page holds what used to sit in the side column of ② (Sci-Hub, institutional access, API keys, naming template, workers, contact email), plus appearance and notifications. The workspace in the top bar saves itself.
+- Light and dark themes (follow the system by default); the whole stylesheet now runs on colour tokens.
+- Command palette (`Ctrl+K`) for every page and action; shortcuts `Ctrl+1…0` (pages ①…⑩), `Ctrl+,`, `Ctrl+Enter` (main action of the page), `Ctrl+S`; collapsible icon sidebar.
+- Job monitor: the status bar and the window title show the running job and its progress; a finished, stopped or failed job is announced, with a system notification when the window is in the background.
+- Drag and drop: text / BibTeX / RIS files dropped on ①, ② or ⑩ are appended to the input box.
+- Less clutter on every page: saved tasks moved from a strip above each page into a "History" button in the top bar (a popover with the current page's list); each page's download settings collapse to one line ("Will be saved to … · Sci-Hub · workers 3", click to change); export buttons are grouped in an "Export" menu on ① and the secondary actions of ② in a "More" menu; the card titles that repeated the page name are gone; counters stay hidden until there is something to count; empty states use line icons.
+- Page layouts tidied: topic search keeps its fields on one row; lab pages use the same field / action rows as the other pages; the journal library shows its three steps as cards and its fields no longer overflow.
+- `i18n.js` no longer rewrites whole elements that contain an icon (it would have wiped the sidebar icons); their labels are translated on their own.
+- Tests: `tests/test_desktop.py` (fake pywebview: dialogs, filters, window state, close guard, single instance, server hooks) and `tests/web_shell_check.py` (headless Chrome: navigation, shortcuts, palette, theme, job monitor, drag and drop, language round trip, no horizontal overflow); both run in CI.
+
 **Saved tasks on every page**
 - Every page (lookup, download, search, ChemASAP, journal follow, ResearchGate, lab pages, journal library, preprints) now keeps a "History" list. Results are saved on this computer while they arrive (`taskstore.py`, `<data dir>/history/<page>/<id>.json`, newest 60 per page), so closing the app loses nothing. A saved task can be reopened later with its selection and its download panel, so the unfinished papers can be retried or filed.
 - The newest task of a page reopens by itself when the app starts on an empty page; "New task" starts a fresh record without clearing the page; records can be deleted.
@@ -52,7 +71,7 @@ Restored the email input, fixed `/api/jobs`, the archive path guard and the harv
 
 ## Known limitations
 - Not verified against live services: Crossref/ChemRxiv preprint lookups, real publisher downloads, the institutional-login browser path. Unit, regression, end-to-end (fake backends) and headless-Chrome tests run in CI on Linux and Windows.
-- The Windows installer / PyInstaller build (`DOI Finder.spec`) was not rebuilt after the cleanup.
-- English is partial: `web/i18n.en.js` covers the static markup, and sentences assembled at run time (including the newest strings: preprints, per-page settings) may stay Chinese.
+- The PyInstaller build (`DOI Finder.spec`, entry `desktop.py`) was built and started on Linux (Qt backend); the Windows build and its installer have not been rebuilt or tried on Windows with WebView2.
+- Server-side messages and exported file names / CSV headers stay Chinese in the English UI.
 - `server.py` and `web/app.js` are large and mix several concerns; they grew by patching.
 - Linux: see [README.linux.md](README.linux.md); the browser channel needs Chrome/Chromium on `PATH`.

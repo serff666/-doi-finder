@@ -20,7 +20,7 @@ def test_every_element_js_needs_exists_in_html():
     ids = set(re.findall(r'id="([^"]+)"', html))
     used = set(re.findall(r'\$\("([A-Za-z0-9_\-]+)"\)', js))
     # rendered dynamically, or always guarded by an `if ($("x"))` check
-    dynamic = {"editDoi", "rgStatus", "jhKind"}
+    dynamic = {"editDoi", "rgStatus", "jhKind", "langToggle"}   # langToggle: made by i18n.js
     assert sorted(u for u in used if u not in ids and u not in dynamic) == []
 
 

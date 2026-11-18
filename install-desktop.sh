@@ -10,7 +10,7 @@ Name=DOI Finder
 Comment=Literature search, journal tracking and bulk PDF download
 Exec=bash -c 'cd "$HERE" && ./run.sh'
 Icon=$HERE/assets/icon.png
-Terminal=true
+Terminal=false
 Categories=Education;Science;
 DESK
 echo "Installed: $HOME/.local/share/applications/doi-finder.desktop"
