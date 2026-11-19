@@ -75,7 +75,7 @@ def _undo(undo):
 
 def _many(dois, ws, collection, structure, **kw):
     import downloader
-    return downloader.download_many(dois, filing.destination(ws, collection), "", "{first_author}_{year}_{title}",
+    return downloader.download_many(dois, filing.destination(ws, collection), "", "{year}_{first_author}_{title}",
                                     scihub_conf={"enabled": False}, root=ws, structure=structure, **kw)
 
 

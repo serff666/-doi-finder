@@ -154,7 +154,7 @@ python desktop.py                  :: 桌面窗口；run_server.cmd 等价于此
 
 ### 6.2 命名与重复
 
-- 文件名模板默认 `{first_author}_{year}_{title}`，可用占位符 `{first_author}` `{year}` `{title}` `{journal}` `{doi}`。标题和作者会截断，非法字符会替换，同名自动加序号（勾「重新下载」才覆盖）。
+- 文件名模板默认 `{year}_{first_author}_{title}`，可用占位符 `{first_author}` `{year}` `{title}` `{journal}` `{doi}`。标题和作者会截断，非法字符会替换，同名自动加序号（勾「重新下载」才覆盖）。
 - 工作区根目录的 `.doi-index.json` 记录已下载的 DOI。再次出现同一 DOI 时，已下载的跳过；如果它已在另一个文件夹里，则复制过去，不再联网。旧版本在各子文件夹里留下的索引会被自动识别。
 - 拿到的内容不是 PDF 而是结构化全文（XML/HTML）时，文件扩展名会如实写成 `.xml` / `.txt`，不会伪装成 PDF。
 
@@ -230,7 +230,7 @@ python desktop.py                  :: 桌面窗口；run_server.cmd 等价于此
 | Elsevier API key / insttoken | 空 | 在 dev.elsevier.com 免费申请；订阅全文还需机构给的 insttoken。没有 key 时，Elsevier 文章在失败说明里会提示填写 |
 | Wiley TDM token | 空 | 在 Wiley 在线图书馆的 TDM 页面获取 |
 | OpenAlex key、CORE key | 空 | 可选，提高配额 |
-| 命名模板 | `{first_author}_{year}_{title}` | 见 §6.2 |
+| 命名模板 | `{year}_{first_author}_{title}` | 见 §6.2 |
 
 Elsevier key 与 Wiley token 是发给个人账号的，**不要共享**。
 

@@ -2,7 +2,7 @@
   "_comment": "复制为 settings.json 后填写。所有字段都可留空，留空即关闭对应功能。",
   "download_dir": "",
   "email": "",
-  "template": "{first_author}_{year}_{title}",
+  "template": "{year}_{first_author}_{title}",
 
   "download_workers": 3,
   "force_redownload": false,

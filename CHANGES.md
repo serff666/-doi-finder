@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+**File names**
+- The default file name is now `{year}_{first_author}_{title}` (year first, then author). A saved setting that is still the old default `{first_author}_{year}_{title}` is switched automatically; any other template is left alone. Files already on disk are not renamed.
+
 **A desktop app instead of a web page**
 - `desktop.py` (the Windows build starts here too) shows the interface in its own native window through pywebview — WebView2 on Windows, WebKit on macOS, GTK/Qt on Linux — with its own taskbar entry and no address bar. The server runs inside the app and stops when the window closes.
 - Native dialogs on the window: file / folder pickers (`platform_util.set_picker`, replacing tkinter there) and "Save as" for every export (`window.pywebview.api.save_file`).

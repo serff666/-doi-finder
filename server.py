@@ -138,7 +138,7 @@ DEFAULT_SETTINGS = {
     "inst_first": False,
     "preprint_early": True,
     "browser": "auto",       # 'auto' | 'chrome' | 'edge' —— 驱动哪个浏览器
-    "archive_file_template": "{first_author}_{year}_{title}",
+    "archive_file_template": "{year}_{first_author}_{title}",
     "archive_folder_template": "{year}",
     "my_orcid": "",
     "recent_orcids": "",
@@ -235,6 +235,9 @@ def log(msg: str):
         pass
 
 
+_OLD_NAME_TEMPLATE = "{first_author}_{year}_{title}"
+
+
 def load_settings() -> dict:
     s = dict(DEFAULT_SETTINGS)
     if not SETTINGS_PATH:
@@ -252,6 +255,10 @@ def load_settings() -> dict:
     saved = [ln.strip() for ln in str(s.get("scihub_mirrors") or "").splitlines() if ln.strip()]
     if set(saved) in _OLD_MIRROR_SETS:
         s["scihub_mirrors"] = "\n".join(scihub.DEFAULT_MIRRORS)
+    # the built-in file name order changed (year first, author second); a saved copy of the old default follows it
+    for k in ("template", "archive_file_template"):
+        if s.get(k) == _OLD_NAME_TEMPLATE:
+            s[k] = DEFAULT_SETTINGS[k]
     return s
 
 
@@ -770,7 +777,7 @@ class Handler(BaseHTTPRequestHandler):
 
         dest = os.path.abspath((body.get("dir") or load_settings()["download_dir"]).strip())
         file_tpl = (body.get("file_template") or load_settings().get("archive_file_template")
-                    or "{first_author}_{year}_{title}")
+                    or "{year}_{first_author}_{title}")
         folder_tpl = (body.get("folder_template") or load_settings().get("archive_folder_template")
                       or "{year}")
         fields = {k: str(body.get(k) or "").strip()
