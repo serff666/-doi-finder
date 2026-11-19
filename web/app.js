@@ -1317,7 +1317,7 @@ window.addEventListener("unhandledrejection", (e) => {
       if ($("coreKey")) $("coreKey").value = s.core_key || "";
       if ($("rgBrowser")) $("rgBrowser").value = (s.browser || "auto");
       state.myOrcid = s.my_orcid || "";
-      $("arFileTpl").value = s.archive_file_template || "{first_author}_{year}_{title}";
+      $("arFileTpl").value = s.archive_file_template || "{year}_{first_author}_{title}";
       $("arFolderTpl").value = s.archive_folder_template || "{year}";
       state.recentOrcids = String(s.recent_orcids || "").split("\n").map((v) => v.trim()).filter(Boolean);
       renderOrcidBar();

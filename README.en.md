@@ -154,7 +154,7 @@ Each paper has a total time budget of 240 seconds, after which no new source is 
 
 ### 6.2 Naming and duplicates
 
-- The filename template defaults to `{first_author}_{year}_{title}`; placeholders: `{first_author}` `{year}` `{title}` `{journal}` `{doi}`. Titles and authors are truncated, illegal characters replaced, and a duplicate name gets a number (only "Re-download" overwrites).
+- The filename template defaults to `{year}_{first_author}_{title}`; placeholders: `{first_author}` `{year}` `{title}` `{journal}` `{doi}`. Titles and authors are truncated, illegal characters replaced, and a duplicate name gets a number (only "Re-download" overwrites).
 - `.doi-index.json` at the workspace root records downloaded DOIs. A DOI seen again is skipped if already downloaded; if it sits in another folder it is copied there with no network traffic. The per-folder indexes of older versions are recognised.
 - When what comes back is structured full text (XML/HTML) rather than a PDF, the extension is honestly `.xml` / `.txt`, never disguised as a PDF.
 
@@ -230,7 +230,7 @@ Everything below is on the **Settings** page (sidebar, bottom; `Ctrl+,`) and app
 | Elsevier API key / insttoken | empty | free key at dev.elsevier.com; subscribed full text also needs an insttoken from your institution. Without a key, an Elsevier failure note tells you to enter one |
 | Wiley TDM token | empty | from the TDM page of Wiley Online Library |
 | OpenAlex key, CORE key | empty | optional, raise quotas |
-| Filename template | `{first_author}_{year}_{title}` | §6.2 |
+| Filename template | `{year}_{first_author}_{title}` | §6.2 |
 
 Elsevier keys and Wiley tokens are issued to individual accounts: **do not share them**.
 

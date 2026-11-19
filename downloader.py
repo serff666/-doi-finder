@@ -27,7 +27,7 @@ import preprints
 import filing
 from filing import sanitize, _BAD, _RESERVED  # noqa: F401  (kept importable from here)
 
-DEFAULT_TEMPLATE = "{first_author}_{year}_{title}"
+DEFAULT_TEMPLATE = "{year}_{first_author}_{title}"
 INDEX_NAME = ".doi-index.json"
 MAX_BYTES = 150 * 1024 * 1024
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
