@@ -24,7 +24,8 @@ It does three things, and for every result it states the evidence or the reason 
 - turn titles / references / BibTeX / RIS into DOIs in bulk, with the evidence for each match;
 - download PDFs by DOI in bulk, recording the channel each file really came from and the reason for each failure;
 - get a paper list from a topic, an author, a journal, a lab page, a ResearchGate profile or ChemASAP, and download from the same page;
-- avoid repeating work: downloaded papers are recorded in `.doi-index.json` in the workspace.
+- avoid repeating work: downloaded papers are recorded in `.doi-index.json` in the workspace;
+- keep a "History" on every page: results are saved on this computer as they appear and survive a restart; an old task can be reopened to retry what was not fetched (see §4).
 
 **It does not promise**
 
@@ -78,6 +79,7 @@ The window has a **sidebar** with the pages grouped by job (find papers · get f
 - **Light / dark**: follows the system by default; choose on the Settings page or with the moon button.
 - **Drag and drop**: drop a `.txt` / `.md` / `.csv` / `.bib` / `.ris` file onto ①, ② or ⑩ and its text is appended to the input box. In the desktop window, PDFs dropped anywhere are filed straight away by the ⑦ Archive rules.
 - **Notifications**: when a job finishes while the window is in the background, a system notification is shown (switch on the Settings page).
+- **History**: every page has a collapsible "History" at the top. The page's results (table, selection, inputs and download panel) are saved automatically as they appear, the newest 60 per page are kept; after reopening a record you can retry what was not finished, or delete the record. If a page is empty when the app starts, its newest record opens by itself; "New task" makes the next results a new record without clearing the page. Page ② also has "Save task / Import task" to carry a task to another computer as a JSON file.
 
 | Page | Input | Output |
 |---|---|---|
@@ -196,7 +198,7 @@ Every page files by the same rule, so the path is always:
 
 ```
 workspace / collection / sub / file.pdf
-e.g. D:\Literature\Zhang Xinglong\2025\Zhang_2025_Title.pdf
+e.g. D:\Literature\Zhang Xinglong\2025\2025_Zhang_Title.pdf
 ```
 
 - **Workspace**: the root folder set at the top. A page can name a different workspace for itself.
@@ -239,7 +241,7 @@ Elsevier keys and Wiley tokens are issued to individual accounts: **do not share
 - **③ Topic search**: keyword search uses OpenAlex (up to 40 results by default); the table shows title and DOI, journal and year, authors, citations and whether it is open access. With an ORCID, the ORCID public API is used first for the works that author registered, and OpenAlex only if that returns nothing.
 - **④ ChemASAP**: data comes from the third-party ChemASAP service (`api.baranlab.org`); which journals it covers is that service's decision, not this program's, and there are no per-journal or per-field tick boxes. You can filter by title, author or journal name, or show open access only. The data is cached for 10 minutes.
 - **⑤ Journal feed**: data comes from Crossref's journal catalogue, not from publisher pages. The "new" mark means new since your last refresh; "Mark read" saves the current position.
-- **⑥ ResearchGate**: the site has a Cloudflare human check that must be passed first with "Open and log in" in the window that opens. Scraping goes page by page; a few hundred papers take a minute or two. Entries may lack a DOI, in which case they go through title resolution.
+- **⑥ ResearchGate**: the site has a Cloudflare human check that must be passed first with "Open and log in" in the window that opens. The author's list is read page by page (100 per page); a few hundred papers take a minute or two. If the total the page states differs from the number read, the result says it may be incomplete, and you can fetch again. Entries may lack a DOI, in which case they go through title resolution.
 - **⑦ Archive**: reads the PDF's first page to guess title and year (needs `pypdf`); you can also type title, authors, year, journal and DOI.
 - **⑧ Lab pages**: opens the page in a real browser and loads it in rounds (some pages must be scrolled to the end), which can take a minute or two. Links the page gives as direct PDFs are downloaded from the link; entries with only a DOI follow the routes of §6; entries with only a title need to go to ① first. An arXiv paper with no DOI gets `10.48550/arXiv.<id>` synthesised. File names carry the title and a link hash to avoid overwriting.
 - **⑨ Journal library**: the bibliography comes from Crossref; contents pages, covers, corrections and the like are filtered by the "type" option (default: exclude corrections / editorials / tables of contents). Review time and quartile can optionally be shown, see below.
@@ -252,6 +254,7 @@ Tab ⑨ can show a journal's average / median review time, JCR quartile, CAS zon
 
 - The program and its data run on your computer; the server listens on `127.0.0.1` only and checks the Host and Origin of requests, so other websites cannot drive its API. There are no accounts and no telemetry.
 - Keys are written only to `settings.json` on your machine; they are not uploaded and not packed into the installer.
+- History records are JSON files under `history/` in the local data folder; they contain the paper lists you found and the download results, and are not uploaded. To leave nothing behind, delete records in the page's "History" or delete that folder.
 - **But searching and downloading need the network**: the titles, DOIs, keywords and author names you enter, and the contact email you give, are sent to the third-party services used (Crossref, OpenAlex, Unpaywall, Europe PMC and others; when enabled also Sci-Hub mirrors, publisher sites, ChemRxiv, ChemASAP, Baidu Scholar, ResearchGate). Be aware of this before using it.
 - The institutional channel uses your own browser session; the program does not store passwords.
 
@@ -290,6 +293,7 @@ carsi.py          institutional login entry
 preprints.py      ChemRxiv preprint search and grading
 filing.py         workspace / collection / sub rules, year detection
 journals.py       journal feed
+taskstore.py      per-page history (save / load / delete)
 journalinfo.py    journal facts (optional download)
 labpage.py        lab page scraping
 chem.py           ChemASAP interface
